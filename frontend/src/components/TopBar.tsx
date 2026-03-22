@@ -4,11 +4,13 @@ import { WalletButton } from "./WalletButton";
 interface Props {
   connected: boolean;
   address: string | null;
+  balanceLovelace: number | null;
+  balancePusd: number | null;
   onConnect: () => void;
   onDisconnect: () => void;
 }
 
-export function TopBar({ connected, address, onConnect, onDisconnect }: Props) {
+export function TopBar({ connected, address, balanceLovelace, balancePusd, onConnect, onDisconnect }: Props) {
   const { data: price } = usePrice();
 
   return (
@@ -22,12 +24,26 @@ export function TopBar({ connected, address, onConnect, onDisconnect }: Props) {
           </span>
         )}
       </div>
-      <WalletButton
-        connected={connected}
-        address={address}
-        onConnect={onConnect}
-        onDisconnect={onDisconnect}
-      />
+      <div className="flex items-center gap-4">
+        {connected && balanceLovelace != null && (
+          <div className="flex items-center gap-3 text-sm">
+            <span className="text-gray-300">
+              <span className="font-semibold">{(balanceLovelace / 1_000_000).toFixed(2)}</span>
+              <span className="text-gray-500 ml-1">ADA</span>
+            </span>
+            <span className="text-gray-300">
+              <span className="font-semibold">{((balancePusd ?? 0) / 1_000_000).toFixed(2)}</span>
+              <span className="text-pyth-purple ml-1">PUSD</span>
+            </span>
+          </div>
+        )}
+        <WalletButton
+          connected={connected}
+          address={address}
+          onConnect={onConnect}
+          onDisconnect={onDisconnect}
+        />
+      </div>
     </header>
   );
 }

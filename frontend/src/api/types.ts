@@ -9,6 +9,7 @@ export interface CdpInfo {
 export interface PriceInfo {
   adaUsd: number;
   timestamp: string;
+  policyId: string;
 }
 
 export interface OpenCdpRequest {

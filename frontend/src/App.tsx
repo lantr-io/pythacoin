@@ -62,7 +62,8 @@ export default function App() {
 
   const refresh = useCallback(() => {
     qc.invalidateQueries({ queryKey: ["cdps"] });
-  }, [qc]);
+    wallet.refreshBalance();
+  }, [qc, wallet]);
 
   const handleAction = useCallback(
     (cdp: CdpInfo, action: CdpAction) => {
@@ -142,10 +143,19 @@ export default function App() {
       <TopBar
         connected={wallet.connected}
         address={wallet.address}
+        balanceLovelace={wallet.balanceLovelace}
+        balancePusd={wallet.balancePusd}
         onConnect={handleConnect}
         onDisconnect={wallet.disconnect}
       />
       <main className="flex-1 max-w-5xl mx-auto w-full px-6 py-8 space-y-8">
+        <p className="text-lg text-gray-300">
+          PUSD is a synthetic stablecoin on Cardano, backed by ADA collateral and priced via the{" "}
+          <a href="https://pyth.network" target="_blank" rel="noreferrer" className="text-purple-400 hover:underline">
+            Pyth Network
+          </a>{" "}
+          oracle.
+        </p>
         {wallet.connected && wallet.address && (
           <OpenCdpForm
             address={wallet.address}
@@ -164,9 +174,27 @@ export default function App() {
             onAction={handleAction}
           />
         </div>
+
+        <section className="rounded-lg border border-pyth-border bg-pyth-bg2 p-5">
+          <h2 className="font-semibold text-lg mb-3">How it works</h2>
+          <ul className="text-sm text-gray-300 space-y-1.5 list-disc list-inside">
+            <li><strong>Open a CDP</strong> &mdash; lock ADA as collateral and mint PUSD. Max loan-to-value: <strong>95%</strong>.</li>
+            <li><strong>Borrow more</strong> &mdash; mint additional PUSD against your collateral (owner only, must stay under 95% LTV).</li>
+            <li><strong>Repay</strong> &mdash; burn PUSD to reduce your debt (owner only).</li>
+            <li><strong>Close</strong> &mdash; burn all PUSD debt + the CDP NFT, get your ADA back (owner only).</li>
+            <li><strong>Liquidate</strong> &mdash; anyone can liquidate a CDP whose LTV exceeds <strong>90%</strong>. The liquidator provides PUSD to cover the debt and receives the ADA collateral.</li>
+          </ul>
+          <p className="text-xs text-gray-500 mt-3">
+            All rules are enforced on-chain by a Plutus V3 smart contract. Each CDP is identified by a unique NFT.
+          </p>
+        </section>
       </main>
-      <footer className="text-center text-xs text-gray-600 py-4 border-t border-pyth-border">
-        Pythacoin - CDP Stablecoin powered by Pyth Network
+      <footer className="flex items-center justify-center gap-4 text-xs text-gray-600 py-4 border-t border-pyth-border">
+        <span>Pythacoin &mdash; CDP Stablecoin powered by Pyth Network</span>
+        <span className="text-gray-700">|</span>
+        <a href="https://scalus.org" target="_blank" rel="noreferrer" className="flex items-center gap-1.5 hover:text-gray-400 transition-colors">
+          Built with Scalus <img src="https://scalus.org/scalus-logo-dark.png" alt="Scalus" className="h-4 inline" />
+        </a>
       </footer>
 
       {modalProps && (

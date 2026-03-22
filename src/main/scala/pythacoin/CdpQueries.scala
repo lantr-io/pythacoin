@@ -75,5 +75,6 @@ case class CdpInfo(
 
 case class PriceInfo(
     adaUsd: Double,
-    timestamp: String
+    timestamp: String,
+    policyId: String
 ) derives upickle.default.ReadWriter

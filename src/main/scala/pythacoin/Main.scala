@@ -2,7 +2,6 @@ package pythacoin
 
 import com.monovore.decline.{Command, Opts}
 import scalus.cardano.address.Network
-import scalus.crypto.ed25519.given
 
 enum Cmd:
     case Blueprint, Start
@@ -34,13 +33,10 @@ object Cli:
         val blockfrostApiKey = System.getenv("BLOCKFROST_API_KEY") match
             case null   => sys.error("BLOCKFROST_API_KEY environment variable is not set")
             case apiKey => apiKey
-        val mnemonic = System.getenv("MNEMONIC") match
-            case null     => sys.error("MNEMONIC environment variable is not set")
-            case mnemonic => mnemonic
         val pythPolicyId = System.getenv("PYTH_POLICY_ID") match
             case null => sys.error("PYTH_POLICY_ID environment variable is not set")
             case id   => id
-        val appCtx = AppCtx(Network.Testnet, mnemonic, blockfrostApiKey, pythPolicyId)
+        val appCtx = AppCtx(Network.Testnet, blockfrostApiKey, pythPolicyId)
         println("Starting the Pythacoin server...")
         Server(appCtx).start()
     }

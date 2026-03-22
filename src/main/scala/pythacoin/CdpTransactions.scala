@@ -128,15 +128,19 @@ class CdpTransactions(ctx: AppCtx, pythClient: PythClient)(using CardanoInfo) {
             .requireSignature(AddrKeyHash(oldDatum.owner.hash))
     }
 
-    /** Build a transaction to liquidate an under-collateralized CDP. */
+    /** Build a transaction to liquidate an under-collateralized CDP.
+      * @param liquidatorPusdUtxos UTxOs from the liquidator that contain PUSD tokens to burn
+      */
     def liquidateCdp(
         cdpUtxo: Utxo,
         liquidatorAddr: Address,
+        liquidatorPusdUtxos: Utxos,
         now: Instant
     ): TxBuilder = {
         val (pythState, pythWithdrawAddr, updateBytes, pythWitness) = fetchPythInfo(now)
         val oldDatum = parseCdpDatum(cdpUtxo)
         val nftName = findNftName(cdpUtxo)
+        val collateral = cdpUtxo.output.value.coin.value
 
         txBuilder
             .references(pythState)
@@ -144,11 +148,13 @@ class CdpTransactions(ctx: AppCtx, pythClient: PythClient)(using CardanoInfo) {
             .validFrom(now.minusSeconds(600))
             .validTo(now.plusSeconds(600))
             .spend(cdpUtxo, CdpAction.Liquidate, ctx.cdpScript)
+            .spend(liquidatorPusdUtxos)
             .mint(
               ctx.cdpScript,
               Map(nftName -> -1L, pusdAsset -> -oldDatum.debt.toLong),
               CdpAction.Liquidate
             )
+            .payTo(liquidatorAddr, Value.lovelace(collateral))
     }
 
     /** Fetch Pyth oracle state and build the withdrawal witness. */

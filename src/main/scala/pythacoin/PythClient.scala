@@ -1,6 +1,6 @@
 package pythacoin
 
-import scalus.cardano.address.{Network, StakeAddress, StakePayload}
+import scalus.cardano.address.{Address, Network, StakeAddress, StakePayload}
 import scalus.cardano.ledger.*
 import scalus.cardano.node.BlockchainProvider
 import scalus.uplc.builtin.ByteString
@@ -16,6 +16,8 @@ import scala.concurrent.duration.*
 class PythClient(
     pythPolicyId: ScriptHash,
     pythKey: String,
+    blockfrostApiKey: String,
+    blockfrostBaseUrl: String,
     provider: BlockchainProvider
 )(using backend: Backend[Future]) {
 
@@ -49,18 +51,37 @@ class PythClient(
     /** Find Pyth State UTxO by looking for the NFT with "Pyth State" token name. */
     def fetchPythState(): Utxo = {
         val pythStateName = AssetName(ByteString.fromString("Pyth State"))
-        val utxos = provider
-            .queryUtxos { u =>
-                u.output.value.hasAsset(pythPolicyId, pythStateName)
-            }
-            .limit(1)
-            .execute()
+        val asset = pythPolicyId.toHex + pythStateName.bytes.toHex
+
+        // Step 1: find addresses holding this asset via Blockfrost
+        val addrResponse = basicRequest
+            .get(uri"$blockfrostBaseUrl/assets/$asset/addresses")
+            .header("project_id", blockfrostApiKey)
+            .send(backend)
             .await(30.seconds)
 
-        utxos match
-            case Right(found) if found.nonEmpty => Utxo(found.head)
-            case Right(_)   => throw RuntimeException("Pyth State UTxO not found")
-            case Left(error) => throw RuntimeException(s"Failed to query Pyth State: $error")
+        val addrJson = addrResponse.body match
+            case Right(body) => body
+            case Left(error) => throw RuntimeException(s"Failed to find Pyth State asset: $error")
+
+        // Extract first address from [{"address":"addr...","quantity":"1"}]
+        val addrKey = "\"address\":\""
+        val idx = addrJson.indexOf(addrKey)
+        if idx < 0 then throw RuntimeException(s"No address found for Pyth State asset: $addrJson")
+        val start = idx + addrKey.length
+        val end = addrJson.indexOf('"', start)
+        val addrBech32 = addrJson.substring(start, end)
+        val addr = Address.fromBech32(addrBech32)
+
+        // Step 2: query UTxOs at that address filtered by asset
+        val utxos = provider.findUtxos(addr).await(30.seconds) match
+            case Right(found) => found
+            case Left(error)  => throw RuntimeException(s"Failed to query Pyth State UTxOs: $error")
+
+        utxos.collectFirst {
+            case (input, output) if output.value.hasAsset(pythPolicyId, pythStateName) =>
+                Utxo(input, output)
+        }.getOrElse(throw RuntimeException("Pyth State UTxO not found"))
     }
 
     /** Extract withdraw script hash from Pyth State inline datum (field 4). */

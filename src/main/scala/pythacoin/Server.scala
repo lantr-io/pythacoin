@@ -28,13 +28,15 @@ given sttp.client4.Backend[Future] = DefaultFutureBackend()
 case class AppCtx(
     cardanoInfo: CardanoInfo,
     provider: BlockchainProvider,
+    blockfrostApiKey: String,
+    blockfrostBaseUrl: String,
     pythPolicyId: ScriptHash,
     pythKey: String,
     cdpScript: PlutusV3[Data => Unit]
 ) {
     lazy val policyId: ScriptHash = cdpScript.script.scriptHash
     lazy val scriptAddr: Address = cdpScript.address(cardanoInfo.network)
-    lazy val pythClient: PythClient = PythClient(pythPolicyId, pythKey, provider)
+    lazy val pythClient: PythClient = PythClient(pythPolicyId, pythKey, blockfrostApiKey, blockfrostBaseUrl, provider)
     lazy val cdpQueries: CdpQueries = CdpQueries(this)
     lazy val cdpTransactions: CdpTransactions = {
         given CardanoInfo = cardanoInfo
@@ -50,17 +52,17 @@ object AppCtx {
         pythPolicyIdHex: String,
         pythKey: String
     ): AppCtx = {
-        val provider =
+        val (provider, baseUrl) =
             if network == ScalusNetwork.Mainnet then
-                BlockfrostProvider.mainnet(blockfrostApiKey).await(30.seconds)
+                (BlockfrostProvider.mainnet(blockfrostApiKey).await(30.seconds), "https://cardano-mainnet.blockfrost.io/api/v0")
             else if network == ScalusNetwork.Testnet then
-                BlockfrostProvider.preprod(blockfrostApiKey).await(30.seconds)
+                (BlockfrostProvider.preprod(blockfrostApiKey).await(30.seconds), "https://cardano-preprod.blockfrost.io/api/v0")
             else sys.error(s"Unsupported network: $network")
 
         val pythPolicy = ScriptHash.fromHex(pythPolicyIdHex)
         val cdpScript = CdpContract(pythPolicy)
 
-        new AppCtx(provider.cardanoInfo, provider, pythPolicy, pythKey, cdpScript)
+        new AppCtx(provider.cardanoInfo, provider, blockfrostApiKey, baseUrl, pythPolicy, pythKey, cdpScript)
     }
 
     def yaciDevKit(pythPolicyIdHex: String): AppCtx = {
@@ -68,7 +70,7 @@ object AppCtx {
         val pythPolicy = ScriptHash.fromHex(pythPolicyIdHex)
         val cdpScript = CdpContract(pythPolicy)
 
-        new AppCtx(provider.cardanoInfo, provider, pythPolicy, "", cdpScript)
+        new AppCtx(provider.cardanoInfo, provider, "", "http://localhost:8080/api/v1", pythPolicy, "", cdpScript)
     }
 }
 

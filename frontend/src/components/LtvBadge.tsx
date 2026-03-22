@@ -11,7 +11,7 @@ export function LtvBadge({ ltv }: Props) {
         : "bg-green-600";
 
   return (
-    <span className={`${color} text-xs font-bold px-2 py-0.5 rounded`}>
+    <span className={`${color} text-xs font-bold px-2 py-0.5 rounded shrink-0`}>
       {ltv.toFixed(1)}% LTV
     </span>
   );

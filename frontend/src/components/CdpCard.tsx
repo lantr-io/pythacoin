@@ -39,8 +39,8 @@ export function CdpCard({
   const ltv = computeLtv(cdp, adaUsd);
   return (
     <div className="bg-pyth-card border border-pyth-border rounded-xl p-5">
-      <div className="flex items-center justify-between mb-3">
-        <span className="font-mono text-sm text-gray-400">{cdp.nftName}</span>
+      <div className="flex items-center justify-between gap-2 mb-3">
+        <span className="font-mono text-sm text-gray-400 truncate min-w-0">{cdp.nftName}</span>
         <LtvBadge ltv={ltv} />
       </div>
       <div className="grid grid-cols-2 gap-3 text-sm mb-4">

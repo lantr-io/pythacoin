@@ -1,17 +1,24 @@
 import { useState } from "react";
 import { api } from "../api/client";
+import { LtvBadge } from "./LtvBadge";
 
 interface Props {
   address: string;
+  adaUsd: number | null;
   onSuccess: () => void;
   signAndSubmit: (txHex: string) => Promise<string>;
 }
 
-export function OpenCdpForm({ address, onSuccess, signAndSubmit }: Props) {
+export function OpenCdpForm({ address, adaUsd, onSuccess, signAndSubmit }: Props) {
   const [collateral, setCollateral] = useState("");
   const [borrow, setBorrow] = useState("");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  const borrowNum = parseFloat(borrow) || 0;
+  const collateralNum = parseFloat(collateral) || 0;
+  const collateralUsd = adaUsd && adaUsd > 0 ? collateralNum * adaUsd : 0;
+  const ltv = collateralUsd > 0 ? (borrowNum / collateralUsd) * 100 : 0;
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -45,22 +52,11 @@ export function OpenCdpForm({ address, onSuccess, signAndSubmit }: Props) {
       onSubmit={handleSubmit}
       className="bg-pyth-card border border-pyth-border rounded-xl p-5"
     >
-      <h2 className="font-semibold mb-4">Open CDP</h2>
+      <div className="flex items-center justify-between mb-4">
+        <h2 className="font-semibold">Open CDP</h2>
+        {(borrowNum > 0 || collateralNum > 0) && <LtvBadge ltv={ltv} />}
+      </div>
       <div className="space-y-3">
-        <div>
-          <label className="text-sm text-gray-400 block mb-1">
-            Collateral (ADA)
-          </label>
-          <input
-            type="number"
-            step="0.01"
-            value={collateral}
-            onChange={(e) => setCollateral(e.target.value)}
-            className="w-full bg-pyth-dark border border-pyth-border rounded px-3 py-2 text-sm"
-            placeholder="1000"
-            required
-          />
-        </div>
         <div>
           <label className="text-sm text-gray-400 block mb-1">
             Borrow (PUSD)
@@ -72,6 +68,20 @@ export function OpenCdpForm({ address, onSuccess, signAndSubmit }: Props) {
             onChange={(e) => setBorrow(e.target.value)}
             className="w-full bg-pyth-dark border border-pyth-border rounded px-3 py-2 text-sm"
             placeholder="500"
+            required
+          />
+        </div>
+        <div>
+          <label className="text-sm text-gray-400 block mb-1">
+            Collateral (ADA)
+          </label>
+          <input
+            type="number"
+            step="0.01"
+            value={collateral}
+            onChange={(e) => setCollateral(e.target.value)}
+            className="w-full bg-pyth-dark border border-pyth-border rounded px-3 py-2 text-sm"
+            placeholder="1000"
             required
           />
         </div>

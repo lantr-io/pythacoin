@@ -149,6 +149,7 @@ export default function App() {
         {wallet.connected && wallet.address && (
           <OpenCdpForm
             address={wallet.address}
+            adaUsd={price?.adaUsd ?? null}
             onSuccess={refresh}
             signAndSubmit={signAndSubmit}
           />

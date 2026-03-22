@@ -324,7 +324,7 @@ class Server(ctx: AppCtx):
                 )
                 val signedTx = unsignedTx.withWitness(existing.copy(vkeyWitnesses = mergedVkeys))
                 Log.info(s"Submitting tx ${signedTx.id.toHex} with ${mergedVkeys.toSet.size} vkey witnesses...")
-                val result = ctx.provider.submitAndPoll(signedTx).await(120.seconds)
+                val result = ctx.provider.submit(signedTx).await(30.seconds)
                 result match
                     case Right(txHash) =>
                         Log.info(s"Tx submitted: ${txHash.toHex}")
@@ -333,8 +333,9 @@ class Server(ctx: AppCtx):
                         Log.error(s"Tx submission failed: $error")
                         Left(s"Submission failed: $error")
             catch case e: Exception =>
-                Log.error(s"POST /tx/submit failed: ${e.getMessage}", e)
-                Left(e.getMessage)
+                val msg = Option(e.getMessage).getOrElse(e.getClass.getName)
+                Log.error(s"POST /tx/submit failed: $msg", e)
+                Left(msg)
         }
 
     private val apiEndpoints: List[ServerEndpoint[Any, Identity]] = List(

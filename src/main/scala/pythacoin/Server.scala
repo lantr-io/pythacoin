@@ -5,7 +5,7 @@ import scalus.cardano.ledger.*
 import scalus.cardano.node.{BlockchainProvider, BlockfrostProvider}
 import scalus.uplc.PlutusV3
 import scalus.uplc.builtin.{ByteString, Data}
-import scalus.utils.Hex.toHex
+import scalus.utils.Hex.{hexToBytes, toHex}
 import scalus.utils.await
 import sttp.client4.DefaultFutureBackend
 import scalus.cardano.address.{ShelleyAddress, ShelleyPaymentPart}
@@ -109,6 +109,11 @@ case class TxResponse(
 class Server(ctx: AppCtx):
     private given CardanoInfo = ctx.cardanoInfo
 
+    /** Parse address from hex (CIP-30) or bech32 string. */
+    private def parseAddress(addr: String): Address =
+        if addr.startsWith("addr") then Address.fromBech32(addr)
+        else Address.fromBytes(addr.hexToBytes)
+
     // --- GET /price ---
     private val getPrice = endpoint.get
         .in("price")
@@ -143,7 +148,7 @@ class Server(ctx: AppCtx):
         .errorOut(stringBody)
         .handle { req =>
             try
-                val ownerAddr = Address.fromBech32(req.ownerAddress)
+                val ownerAddr = parseAddress(req.ownerAddress)
                 val collateralLovelace = (req.collateralAda * 1_000_000).toLong
                 val debtPusd = (req.borrowPusd * 1_000_000).toLong
                 val ownerPkh = ownerAddr match
@@ -170,7 +175,7 @@ class Server(ctx: AppCtx):
         .errorOut(stringBody)
         .handle { req =>
             try
-                val ownerAddr = Address.fromBech32(req.ownerAddress)
+                val ownerAddr = parseAddress(req.ownerAddress)
                 val cdpUtxo = ctx.cdpQueries.findCdpUtxo(req.nftName).getOrElse(
                   throw RuntimeException(s"CDP not found: ${req.nftName}")
                 )
@@ -190,7 +195,7 @@ class Server(ctx: AppCtx):
         .errorOut(stringBody)
         .handle { req =>
             try
-                val ownerAddr = Address.fromBech32(req.ownerAddress)
+                val ownerAddr = parseAddress(req.ownerAddress)
                 val cdpUtxo = ctx.cdpQueries.findCdpUtxo(req.nftName).getOrElse(
                   throw RuntimeException(s"CDP not found: ${req.nftName}")
                 )
@@ -210,7 +215,7 @@ class Server(ctx: AppCtx):
         .errorOut(stringBody)
         .handle { req =>
             try
-                val ownerAddr = Address.fromBech32(req.ownerAddress)
+                val ownerAddr = parseAddress(req.ownerAddress)
                 val cdpUtxo = ctx.cdpQueries.findCdpUtxo(req.nftName).getOrElse(
                   throw RuntimeException(s"CDP not found: ${req.nftName}")
                 )
@@ -229,7 +234,7 @@ class Server(ctx: AppCtx):
         .errorOut(stringBody)
         .handle { req =>
             try
-                val liquidatorAddr = Address.fromBech32(req.liquidatorAddress)
+                val liquidatorAddr = parseAddress(req.liquidatorAddress)
                 val cdpUtxo = ctx.cdpQueries.findCdpUtxo(req.nftName).getOrElse(
                   throw RuntimeException(s"CDP not found: ${req.nftName}")
                 )

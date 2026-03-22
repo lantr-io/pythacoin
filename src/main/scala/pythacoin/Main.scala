@@ -1,11 +1,8 @@
-package starter
+package pythacoin
 
 import com.monovore.decline.{Command, Opts}
-import scalus.*
 import scalus.cardano.address.Network
 import scalus.crypto.ed25519.given
-
-import scala.language.implicitConversions
 
 enum Cmd:
     case Blueprint, Start
@@ -20,34 +17,31 @@ object Cli:
             Opts(Cmd.Start)
         }
 
-        Command(name = "minter", header = "Scalus Starter Minting Example")(
+        Command(name = "pythacoin", header = "Pythacoin CDP Stablecoin")(
           blueprintCommand orElse startCommand
         )
     }
 
     private def blueprint(): Unit = {
-        println(MintingPolicyContract.blueprint.toJson())
+        val pythPolicyId = "0000000000000000000000000000000000000000000000000000000000"
+        val script = CdpContract(scalus.uplc.builtin.ByteString.fromHex(pythPolicyId))
+        println(s"Script hash: ${script.script.scriptHash.toHex}")
+        println(s"Script size: ${script.program.cborEncoded.length} bytes")
     }
 
     @main
     def start(): Unit = {
-        // Start the server
         val blockfrostApiKey = System.getenv("BLOCKFROST_API_KEY") match
             case null   => sys.error("BLOCKFROST_API_KEY environment variable is not set")
             case apiKey => apiKey
         val mnemonic = System.getenv("MNEMONIC") match
             case null     => sys.error("MNEMONIC environment variable is not set")
             case mnemonic => mnemonic
-        val appCtx = AppCtx(Network.Testnet, mnemonic, blockfrostApiKey, "CO2 Tonne")
-        println("Starting the server...")
-        Server(appCtx).start()
-    }
-
-    @main
-    def yaciDevKit(): Unit = {
-        // Start the server
-        val appCtx = AppCtx.yaciDevKit("CO2 Tonne")
-        println("Starting the server...")
+        val pythPolicyId = System.getenv("PYTH_POLICY_ID") match
+            case null => sys.error("PYTH_POLICY_ID environment variable is not set")
+            case id   => id
+        val appCtx = AppCtx(Network.Testnet, mnemonic, blockfrostApiKey, pythPolicyId)
+        println("Starting the Pythacoin server...")
         Server(appCtx).start()
     }
 
@@ -57,5 +51,5 @@ object Cli:
             case Right(cmd) =>
                 cmd match
                     case Cmd.Blueprint => blueprint()
-                    case Cmd.Start => start()
+                    case Cmd.Start     => start()
     }

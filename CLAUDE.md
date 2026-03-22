@@ -1,10 +1,15 @@
-# Claude Code Guidelines for scalus-starter
+# Pythacoin – synthetic CDP-based stablecoin using Pyth ADA/USD price oracle
 
 ## Project Overview
 
-A Cardano DApp starter project using Scalus. Demonstrates smart contract development,
-minting policies, transaction building, and testing with both an emulator and Yaci DevKit.
-Built with Scala 3.3.7 and Scalus 0.16.0.
+Pythacoin – synthetic CDP-based stablecoin using Pyth oracles network for ADA/USD price oracle.
+It's a project for Pythaton – Pyth hackathon.
+
+## Context
+
+https://pyth.network
+https://docs.pyth.network/price-feeds/pro/integrate-as-consumer/cardano
+https://github.com/pyth-network/pyth-examples
 
 ## Commands
 
@@ -19,24 +24,6 @@ Use `sbtn` for all build commands.
 | `sbtn Test/compile`     | Compile core module with tests          |
 
 **Note:** Integration tests use Yaci DevKit via Testcontainers and require Docker to be running.
-
-## Architecture
-
-### Module Structure
-
-| Module        | sbt Project   | Purpose                                    |
-|---------------|---------------|--------------------------------------------|
-| `.` (root)    | `core`        | Smart contracts, transactions, HTTP server |
-| `integration` | `integration` | Integration tests with Yaci DevKit         |
-
-### Key Source Locations
-
-- Smart contracts: `src/main/scala/starter/MintingPolicy.scala`
-- Transaction building: `src/main/scala/starter/Transactions.scala`
-- HTTP server: `src/main/scala/starter/Server.scala`
-- CLI entry point: `src/main/scala/starter/Main.scala`
-- Unit tests: `src/test/scala/starter/`
-- Integration tests: `integration/src/test/scala/starter/`
 
 ## Scala 3 Code Style
 
@@ -88,6 +75,9 @@ implementation patterns, and usage examples.
 
 - `build.sbt` - Build configuration, dependencies, Scalus plugin setup
 - `.scalafmt.conf` - Code formatting (4-space indent, 100 col max)
-- `src/main/scala/starter/MintingPolicy.scala` - Example Plutus V3 minting policy
-- `src/main/scala/starter/Transactions.scala` - Transaction building with TxBuilder
-- `src/test/scala/starter/TransactionsTestBase.scala` - Shared test base for emulator and devkit
+- `src/main/scala/pythacoin/onchain/CdpValidator.scala` - CDP validator with Pyth oracle integration
+- `src/main/scala/pythacoin/onchain/StrictLookups.scala` - On-chain utility extensions
+- `src/main/scala/pythacoin/CdpContract.scala` - Off-chain contract compilation
+- `src/main/scala/pythacoin/Server.scala` - REST API server and AppCtx
+- `src/main/scala/pythacoin/Main.scala` - Entry point
+- `src/test/scala/pythacoin/CdpValidatorTest.scala` - Validator unit tests

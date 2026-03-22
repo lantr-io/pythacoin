@@ -45,11 +45,17 @@ export default function App() {
     async (txHex: string) => {
       if (!wallet.walletApi) throw new Error("Wallet not connected");
       console.log("[signAndSubmit] Signing tx, CBOR hex length:", txHex.length);
-      const witness = await wallet.walletApi.signTx(txHex, true);
-      console.log("[signAndSubmit] Got witness, submitting...");
-      const txHash = await wallet.walletApi.submitTx(witness);
-      console.log("[signAndSubmit] Submitted! txHash:", txHash);
-      return txHash;
+      // CIP-30 signTx returns a TransactionWitnessSet CBOR, not the full signed tx
+      const witnessSetHex = await wallet.walletApi.signTx(txHex, true);
+      console.log("[signAndSubmit] Got witness set, length:", witnessSetHex?.length, "type:", typeof witnessSetHex);
+      console.log("[signAndSubmit] Witness set hex (first 80):", witnessSetHex?.substring(0, 80));
+      // Send both to backend for merging + submission via Blockfrost
+      const result = await api.submitTx({
+        txCborHex: txHex,
+        witnessCborHex: witnessSetHex,
+      });
+      console.log("[signAndSubmit] Submitted! txHash:", result.txHash);
+      return result.txHash;
     },
     [wallet.walletApi],
   );

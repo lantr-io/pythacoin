@@ -5,6 +5,7 @@ import scalus.cardano.ledger.*
 import scalus.cardano.node.{BlockchainProvider, BlockfrostProvider}
 import scalus.uplc.PlutusV3
 import scalus.uplc.builtin.{ByteString, Data}
+import scalus.serialization.cbor.Cbor
 import scalus.utils.Hex.{hexToBytes, toHex}
 import scalus.utils.{await, showDetailedHighlighted}
 import sttp.client4.DefaultFutureBackend
@@ -106,6 +107,15 @@ case class LiquidateRequest(
 
 case class TxResponse(
     txCborHex: String
+) derives upickle.default.ReadWriter
+
+case class SubmitTxRequest(
+    txCborHex: String,
+    witnessCborHex: String
+) derives upickle.default.ReadWriter
+
+case class SubmitTxResponse(
+    txHash: String
 ) derives upickle.default.ReadWriter
 
 class Server(ctx: AppCtx):
@@ -278,6 +288,43 @@ class Server(ctx: AppCtx):
                 Left(e.getMessage)
         }
 
+    // --- POST /tx/submit ---
+    private val submitTxEndpoint = endpoint.post
+        .in("tx" / "submit")
+        .in(jsonBody[SubmitTxRequest])
+        .out(jsonBody[SubmitTxResponse])
+        .errorOut(stringBody)
+        .handle { req =>
+            try
+                Log.info(s"POST /tx/submit: txCborHex=${if req.txCborHex == null then "NULL" else s"${req.txCborHex.length} chars"}, witnessCborHex=${if req.witnessCborHex == null then "NULL" else s"${req.witnessCborHex.length} chars"}")
+                require(req.txCborHex != null && req.txCborHex.nonEmpty, "txCborHex is required")
+                require(req.witnessCborHex != null && req.witnessCborHex.nonEmpty, "witnessCborHex is required")
+                given ProtocolVersion = ProtocolVersion.conwayPV
+                val unsignedTx = Transaction.fromCbor(req.txCborHex.hexToBytes)
+                Log.info(s"Parsed unsigned tx: ${unsignedTx.id.toHex}")
+                val witnessBytes = req.witnessCborHex.hexToBytes
+                given OriginalCborByteArray = OriginalCborByteArray(witnessBytes)
+                val walletWitnesses = Cbor.decode[TransactionWitnessSet](witnessBytes)
+                Log.info(s"Wallet provided ${walletWitnesses.vkeyWitnesses.toSet.size} vkey witnesses")
+                val existing = unsignedTx.witnessSet
+                val mergedVkeys = TaggedSortedSet.from(
+                  existing.vkeyWitnesses.toSet ++ walletWitnesses.vkeyWitnesses.toSet
+                )
+                val signedTx = unsignedTx.withWitness(existing.copy(vkeyWitnesses = mergedVkeys))
+                Log.info(s"Submitting tx ${signedTx.id.toHex} with ${mergedVkeys.toSet.size} vkey witnesses...")
+                val result = ctx.provider.submitAndPoll(signedTx).await(120.seconds)
+                result match
+                    case Right(txHash) =>
+                        Log.info(s"Tx submitted: ${txHash.toHex}")
+                        Right(SubmitTxResponse(txHash.toHex))
+                    case Left(error) =>
+                        Log.error(s"Tx submission failed: $error")
+                        Left(s"Submission failed: $error")
+            catch case e: Exception =>
+                Log.error(s"POST /tx/submit failed: ${e.getMessage}", e)
+                Left(e.getMessage)
+        }
+
     private val apiEndpoints: List[ServerEndpoint[Any, Identity]] = List(
       getPrice,
       listCdpsEndpoint,
@@ -285,7 +332,8 @@ class Server(ctx: AppCtx):
       borrowEndpoint,
       repayEndpoint,
       closeEndpoint,
-      liquidateEndpoint
+      liquidateEndpoint,
+      submitTxEndpoint
     )
 
     private val swaggerEndpoints = SwaggerInterpreter()

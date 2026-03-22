@@ -42,3 +42,12 @@ export interface LiquidateRequest {
 export interface TxResponse {
   txCborHex: string;
 }
+
+export interface SubmitTxRequest {
+  txCborHex: string;
+  witnessCborHex: string;
+}
+
+export interface SubmitTxResponse {
+  txHash: string;
+}

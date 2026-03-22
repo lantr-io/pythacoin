@@ -7,6 +7,8 @@ import type {
   CloseRequest,
   LiquidateRequest,
   TxResponse,
+  SubmitTxRequest,
+  SubmitTxResponse,
 } from "./types";
 
 const BASE = "/api";
@@ -50,4 +52,6 @@ export const api = {
   close: (req: CloseRequest) => post<TxResponse>("/cdp/close", req),
   liquidate: (req: LiquidateRequest) =>
     post<TxResponse>("/cdp/liquidate", req),
+  submitTx: (req: SubmitTxRequest) =>
+    post<SubmitTxResponse>("/tx/submit", req),
 };

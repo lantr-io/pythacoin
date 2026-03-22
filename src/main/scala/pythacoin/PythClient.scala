@@ -25,6 +25,7 @@ class PythClient(
 
     /** Fetch signed price update bytes from Pyth Lazer REST API. */
     def fetchPriceUpdate(): ByteString = {
+        Log.info("Fetching price update from Pyth Lazer...")
         val requestBody =
             s"""{"priceFeedIds":[16],"properties":["price"],"formats":["solana"],"channel":"fixed_rate@200ms"}"""
         val response = basicRequest
@@ -37,14 +38,14 @@ class PythClient(
 
         response.body match
             case Right(body) =>
-                // Extract solana.data from JSON response
-                // Response format: {"type":"streamUpdated","parsed":...,"solana":{"encoding":"hex"|"base64","data":"..."}}
                 val encoding = extractSolanaEncoding(body)
                 val data = extractSolanaData(body)
+                Log.info(s"Pyth Lazer response encoding=$encoding, data length=${data.length}")
                 encoding match
                     case "base64" => ByteString.fromArray(Base64.getDecoder.decode(data))
                     case _        => ByteString.fromHex(data)
             case Left(error) =>
+                Log.error(s"Pyth Lazer API error: $error")
                 throw RuntimeException(s"Pyth Lazer API error: $error")
     }
 
@@ -52,6 +53,7 @@ class PythClient(
     def fetchPythState(): Utxo = {
         val pythStateName = AssetName(ByteString.fromString("Pyth State"))
         val asset = pythPolicyId.toHex + pythStateName.bytes.toHex
+        Log.info(s"Fetching Pyth State UTxO, asset=$asset")
 
         // Step 1: find addresses holding this asset via Blockfrost
         val addrResponse = basicRequest
@@ -62,7 +64,9 @@ class PythClient(
 
         val addrJson = addrResponse.body match
             case Right(body) => body
-            case Left(error) => throw RuntimeException(s"Failed to find Pyth State asset: $error")
+            case Left(error) =>
+                Log.error(s"Failed to find Pyth State asset: $error")
+                throw RuntimeException(s"Failed to find Pyth State asset: $error")
 
         // Extract first address from [{"address":"addr...","quantity":"1"}]
         val addrKey = "\"address\":\""
@@ -71,15 +75,21 @@ class PythClient(
         val start = idx + addrKey.length
         val end = addrJson.indexOf('"', start)
         val addrBech32 = addrJson.substring(start, end)
+        Log.info(s"Pyth State address: $addrBech32")
         val addr = Address.fromBech32(addrBech32)
 
         // Step 2: query UTxOs at that address filtered by asset
         val utxos = provider.findUtxos(addr).await(30.seconds) match
-            case Right(found) => found
-            case Left(error)  => throw RuntimeException(s"Failed to query Pyth State UTxOs: $error")
+            case Right(found) =>
+                Log.info(s"Found ${found.size} UTxOs at Pyth State address")
+                found
+            case Left(error) =>
+                Log.error(s"Failed to query Pyth State UTxOs: $error")
+                throw RuntimeException(s"Failed to query Pyth State UTxOs: $error")
 
         utxos.collectFirst {
             case (input, output) if output.value.hasAsset(pythPolicyId, pythStateName) =>
+                Log.info(s"Found Pyth State UTxO: ${input.transactionId.toHex}#${input.index}")
                 Utxo(input, output)
         }.getOrElse(throw RuntimeException("Pyth State UTxO not found"))
     }
@@ -91,12 +101,15 @@ class PythClient(
         val fields = datum.toConstr.snd
         // fields: governance, trusted_signers, deprecated_withdraw_scripts, withdraw_script
         val withdrawScriptBs = fields.tail.tail.tail.head.toByteString
-        ScriptHash.fromHex(withdrawScriptBs.toHex)
+        val hash = ScriptHash.fromHex(withdrawScriptBs.toHex)
+        Log.info(s"Pyth withdraw script hash: ${hash.toHex}")
+        hash
     }
 
     /** Fetch the Pyth withdraw PlutusScript from Blockfrost by script hash. */
     def fetchScript(scriptHash: ScriptHash): PlutusScript = {
         val hashHex = scriptHash.toHex
+        Log.info(s"Fetching script CBOR from Blockfrost: $hashHex")
         val response = basicRequest
             .get(uri"$blockfrostBaseUrl/scripts/$hashHex/cbor")
             .header("project_id", blockfrostApiKey)
@@ -105,7 +118,9 @@ class PythClient(
 
         val json = response.body match
             case Right(body) => body
-            case Left(error) => throw RuntimeException(s"Failed to fetch script $hashHex: $error")
+            case Left(error) =>
+                Log.error(s"Failed to fetch script $hashHex: $error")
+                throw RuntimeException(s"Failed to fetch script $hashHex: $error")
 
         // Extract cbor field from {"cbor":"..."}
         val cborKey = "\"cbor\":\""
@@ -114,7 +129,9 @@ class PythClient(
         val start = idx + cborKey.length
         val end = json.indexOf('"', start)
         val cborHex = json.substring(start, end)
-        Script.PlutusV3(ByteString.fromHex(cborHex))
+        val script = Script.PlutusV3(ByteString.fromHex(cborHex))
+        Log.info(s"Fetched script, hash=${script.scriptHash.toHex}, size=${cborHex.length / 2} bytes")
+        script
     }
 
     /** Build the StakeAddress for the Pyth withdraw script. */

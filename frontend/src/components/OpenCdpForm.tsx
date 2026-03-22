@@ -18,16 +18,22 @@ export function OpenCdpForm({ address, onSuccess, signAndSubmit }: Props) {
     setLoading(true);
     setError(null);
     try {
-      const resp = await api.openCdp({
+      const req = {
         collateralAda: parseFloat(collateral),
         borrowPusd: parseFloat(borrow),
         ownerAddress: address,
-      });
-      await signAndSubmit(resp.txCborHex);
+      };
+      console.log("[OpenCDP] Building tx with:", req);
+      const resp = await api.openCdp(req);
+      console.log("[OpenCDP] Got unsigned tx, CBOR length:", resp.txCborHex.length);
+      console.log("[OpenCDP] Requesting wallet signature...");
+      const txHash = await signAndSubmit(resp.txCborHex);
+      console.log("[OpenCDP] Submitted! txHash:", txHash);
       setCollateral("");
       setBorrow("");
       onSuccess();
     } catch (err) {
+      console.error("[OpenCDP] Error:", err);
       setError(err instanceof Error ? err.message : "Failed");
     } finally {
       setLoading(false);

@@ -24,8 +24,11 @@ export default function App() {
   const signAndSubmit = useCallback(
     async (txHex: string) => {
       if (!wallet.walletApi) throw new Error("Wallet not connected");
+      console.log("[signAndSubmit] Signing tx, CBOR hex length:", txHex.length);
       const witness = await wallet.walletApi.signTx(txHex, true);
+      console.log("[signAndSubmit] Got witness, submitting...");
       const txHash = await wallet.walletApi.submitTx(witness);
+      console.log("[signAndSubmit] Submitted! txHash:", txHash);
       return txHash;
     },
     [wallet.walletApi],

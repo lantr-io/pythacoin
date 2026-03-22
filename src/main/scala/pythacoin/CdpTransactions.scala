@@ -153,15 +153,19 @@ class CdpTransactions(ctx: AppCtx, pythClient: PythClient)(using CardanoInfo) {
 
     /** Fetch Pyth oracle state and build the withdrawal witness. */
     private def fetchPythInfo(now: Instant): (Utxo, StakeAddress, ByteString, TwoArgumentPlutusScriptWitness) = {
+        Log.info("Fetching Pyth oracle info...")
         val pythState = pythClient.fetchPythState()
         val withdrawHash = pythClient.extractWithdrawScript(pythState)
         val pythWithdrawAddr = StakeAddress(ctx.cardanoInfo.network, StakePayload.Script(withdrawHash))
+        Log.info(s"Pyth withdraw address: ${pythWithdrawAddr.toBech32}")
         val updateBytes = pythClient.fetchPriceUpdate()
+        Log.info(s"Price update bytes: ${updateBytes.size} bytes")
         val withdrawScript = pythClient.fetchScript(withdrawHash)
 
         import scalus.cardano.onchain.plutus.prelude.List as PList
         val pythRedeemer: Data = Data.List(PList(Data.B(updateBytes)))
         val pythWitness = TwoArgumentPlutusScriptWitness.attached(withdrawScript, _ => pythRedeemer)
+        Log.info("Pyth info fetched successfully")
 
         (pythState, pythWithdrawAddr, updateBytes, pythWitness)
     }

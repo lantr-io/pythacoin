@@ -31,10 +31,12 @@ export function useWallet(): WalletState {
   const [address, setAddress] = useState<string | null>(null);
 
   const connect = useCallback(async (walletName: string) => {
+    console.log(`[Wallet] Connecting to ${walletName}...`);
     const provider = window.cardano?.[walletName];
     if (!provider) throw new Error(`${walletName} wallet not found`);
     const api = await provider.enable();
     const addrs = await api.getUsedAddresses();
+    console.log(`[Wallet] Connected, address:`, addrs[0]);
     setWalletApi(api);
     setAddress(addrs[0] ?? null);
   }, []);

@@ -1,4 +1,7 @@
-import { useCallback, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
+import { Decoder } from "cbor-x";
+
+const cborDecoder = new Decoder({ mapsAsObjects: false });
 
 interface WalletApi {
   getUsedAddresses(): Promise<string[]>;
@@ -30,73 +33,65 @@ declare global {
   }
 }
 
-// --- Minimal CBOR decoder for CIP-30 getBalance() ---
-
-/** Read a CBOR unsigned integer at `pos`, return [value, nextPos]. */
-function readCborUint(hex: string, pos: number): [number, number] {
-  const byte0 = parseInt(hex.slice(pos, pos + 2), 16);
-  const minor = byte0 & 0x1f;
-  if (minor <= 23) return [minor, pos + 2];
-  if (minor === 24) return [parseInt(hex.slice(pos + 2, pos + 4), 16), pos + 4];
-  if (minor === 25) return [parseInt(hex.slice(pos + 2, pos + 6), 16), pos + 6];
-  if (minor === 26) return [parseInt(hex.slice(pos + 2, pos + 10), 16), pos + 10];
-  if (minor === 27) return [Number(BigInt("0x" + hex.slice(pos + 2, pos + 18))), pos + 18];
-  return [0, pos + 2];
+function hexToBytes(hex: string): Uint8Array {
+  const bytes = new Uint8Array(hex.length / 2);
+  for (let i = 0; i < hex.length; i += 2) {
+    bytes[i / 2] = parseInt(hex.slice(i, i + 2), 16);
+  }
+  return bytes;
 }
 
-/** Read CBOR bytes at `pos`, return [hexString, nextPos]. */
-function readCborBytes(hex: string, pos: number): [string, number] {
-  const [len, dataStart] = readCborUint(hex, pos);
-  const dataEnd = dataStart + len * 2;
-  return [hex.slice(dataStart, dataEnd), dataEnd];
+function bytesToHex(bytes: Uint8Array): string {
+  return Array.from(bytes, (b) => b.toString(16).padStart(2, "0")).join("");
 }
 
-const PUSD_NAME_HEX = "50555344"; // "PUSD" in hex
+const PUSD_NAME_HEX = "50555344"; // "PUSD" as hex
+
+/** Convert a CBOR-decoded key to lowercase hex, handling both Uint8Array and string. */
+function keyToHex(key: unknown): string {
+  if (key instanceof Uint8Array) return bytesToHex(key);
+  if (key instanceof ArrayBuffer) return bytesToHex(new Uint8Array(key));
+  if (typeof key === "string") {
+    // Could be UTF-8 text or hex — encode UTF-8 bytes to hex
+    return Array.from(new TextEncoder().encode(key), (b) => b.toString(16).padStart(2, "0")).join("");
+  }
+  return "";
+}
 
 interface WalletBalance {
   lovelace: number;
   pusd: number;
 }
 
-/** Parse CIP-30 getBalance() CBOR hex into lovelace + PUSD amounts. */
-function decodeCborBalance(hex: string, policyId: string | null): WalletBalance {
-  const byte0 = parseInt(hex.slice(0, 2), 16);
-  const major = byte0 >> 5;
+/** Parse CIP-30 getBalance() CBOR into lovelace + PUSD amounts. */
+function decodeCborBalance(hex: string): WalletBalance {
+  const decoded = cborDecoder.decode(hexToBytes(hex));
 
-  if (major === 0) {
-    // Pure lovelace (no multi-assets)
-    const [coin] = readCborUint(hex, 0);
-    return { lovelace: coin, pusd: 0 };
+  // Pure lovelace (no multi-assets)
+  if (typeof decoded === "number" || typeof decoded === "bigint") {
+    return { lovelace: Number(decoded), pusd: 0 };
   }
 
-  if (major === 4) {
-    // Array [coin, multiasset_map]
-    const [, coinStart] = readCborUint(hex, 0); // skip array header
-    const [coin, mapPos] = readCborUint(hex, coinStart);
+  // Array [coin, multiasset_map]
+  if (Array.isArray(decoded) && decoded.length === 2) {
+    const coin = Number(decoded[0]);
+    const multiAsset = decoded[1];
 
-    if (!policyId) return { lovelace: coin, pusd: 0 };
+    if (!(multiAsset instanceof Map)) {
+      return { lovelace: coin, pusd: 0 };
+    }
 
-    // Parse map: { policy_id_bytes => { asset_name_bytes => quantity } }
-    const [mapLen, firstEntryPos] = readCborUint(hex, mapPos);
-    let pos = firstEntryPos;
+    // Find PUSD under any policy
     let pusd = 0;
-
-    for (let i = 0; i < mapLen; i++) {
-      const [policyHex, afterPolicy] = readCborBytes(hex, pos);
-      const [innerMapLen, innerStart] = readCborUint(hex, afterPolicy);
-      pos = innerStart;
-
-      for (let j = 0; j < innerMapLen; j++) {
-        const [assetNameHex, afterName] = readCborBytes(hex, pos);
-        const [quantity, afterQty] = readCborUint(hex, afterName);
-        pos = afterQty;
-
-        if (policyHex === policyId && assetNameHex === PUSD_NAME_HEX) {
-          pusd = quantity;
+    for (const [, assets] of multiAsset) {
+      if (!(assets instanceof Map)) continue;
+      for (const [assetKey, quantity] of assets) {
+        const assetHex = keyToHex(assetKey);
+        if (assetHex === PUSD_NAME_HEX) {
+          pusd += Number(quantity);
         }
       }
     }
-
     return { lovelace: coin, pusd };
   }
 
@@ -108,12 +103,14 @@ export function useWallet(): WalletState {
   const [address, setAddress] = useState<string | null>(null);
   const [balanceLovelace, setBalanceLovelace] = useState<number | null>(null);
   const [balancePusd, setBalancePusd] = useState<number | null>(null);
-  const [policyId, setPolicyId] = useState<string | null>(null);
+  const walletApiRef = useRef<WalletApi | null>(null);
 
-  const fetchBalance = useCallback(async (api: WalletApi, pid: string | null) => {
+  const fetchBalance = useCallback(async () => {
+    const api = walletApiRef.current;
+    if (!api) return;
     try {
       const cborHex = await api.getBalance();
-      const bal = decodeCborBalance(cborHex, pid);
+      const bal = decodeCborBalance(cborHex);
       setBalanceLovelace(bal.lovelace);
       setBalancePusd(bal.pusd);
     } catch (err) {
@@ -129,29 +126,25 @@ export function useWallet(): WalletState {
     const addrs = await api.getUsedAddresses();
     console.log(`[Wallet] Connected, address:`, addrs[0]);
     setWalletApi(api);
+    walletApiRef.current = api;
     setAddress(addrs[0] ?? null);
-    // Fetch policy ID from backend, then fetch balance
-    try {
-      const resp = await fetch("/api/price");
-      const data = await resp.json();
-      const pid = data.policyId ?? null;
-      setPolicyId(pid);
-      fetchBalance(api, pid);
-    } catch {
-      fetchBalance(api, null);
-    }
-  }, [fetchBalance]);
+  }, []);
 
   const disconnect = useCallback(() => {
     setWalletApi(null);
+    walletApiRef.current = null;
     setAddress(null);
     setBalanceLovelace(null);
     setBalancePusd(null);
   }, []);
 
-  const refreshBalance = useCallback(() => {
-    if (walletApi) fetchBalance(walletApi, policyId);
-  }, [walletApi, policyId, fetchBalance]);
+  // Poll balance every 5 seconds while connected
+  useEffect(() => {
+    if (!walletApi) return;
+    fetchBalance();
+    const interval = setInterval(fetchBalance, 5000);
+    return () => clearInterval(interval);
+  }, [walletApi, fetchBalance]);
 
   return {
     connected: walletApi !== null,
@@ -161,6 +154,6 @@ export function useWallet(): WalletState {
     walletApi,
     connect,
     disconnect,
-    refreshBalance,
+    refreshBalance: fetchBalance,
   };
 }

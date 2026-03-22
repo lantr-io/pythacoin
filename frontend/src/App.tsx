@@ -21,9 +21,9 @@ function pusdToDisplay(p: number): string {
 }
 
 export default function App() {
-  const wallet = useWallet();
   const { data: cdps } = useCdps();
   const { data: price } = usePrice();
+  const wallet = useWallet();
   const qc = useQueryClient();
 
   const [activeCdp, setActiveCdp] = useState<CdpInfo | null>(null);
@@ -175,9 +175,12 @@ export default function App() {
           />
         </div>
 
-        <section className="rounded-lg border border-pyth-border bg-pyth-bg2 p-5">
-          <h2 className="font-semibold text-lg mb-3">How it works</h2>
-          <ul className="text-sm text-gray-300 space-y-1.5 list-disc list-inside">
+        <details className="rounded-lg border border-pyth-border bg-pyth-bg2 p-5 group">
+          <summary className="font-semibold text-lg cursor-pointer list-none flex items-center gap-2">
+            <span className="text-gray-500 text-sm transition-transform group-open:rotate-90">&#9654;</span>
+            How it works
+          </summary>
+          <ul className="text-sm text-gray-300 space-y-1.5 list-disc list-inside mt-3">
             <li><strong>Open a CDP</strong> &mdash; lock ADA as collateral and mint PUSD. Max loan-to-value: <strong>95%</strong>.</li>
             <li><strong>Borrow more</strong> &mdash; mint additional PUSD against your collateral (owner only, must stay under 95% LTV).</li>
             <li><strong>Repay</strong> &mdash; burn PUSD to reduce your debt (owner only).</li>
@@ -187,7 +190,7 @@ export default function App() {
           <p className="text-xs text-gray-500 mt-3">
             All rules are enforced on-chain by a Plutus V3 smart contract. Each CDP is identified by a unique NFT.
           </p>
-        </section>
+        </details>
       </main>
       <footer className="flex items-center justify-center gap-4 text-xs text-gray-600 py-4 border-t border-pyth-border">
         <span>Pythacoin &mdash; CDP Stablecoin powered by Pyth Network</span>

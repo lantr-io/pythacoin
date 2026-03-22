@@ -277,6 +277,18 @@ class Server(ctx: AppCtx):
                 val cdpUtxo = ctx.cdpQueries.findCdpUtxo(req.nftName).getOrElse(
                   throw RuntimeException(s"CDP not found: ${req.nftName}")
                 )
+                // Check liquidator has enough PUSD to cover the debt burn
+                val datum = cdpUtxo.output.requireInlineDatum.to[pythacoin.onchain.CdpDatum]
+                val debtPusd = datum.debt.toLong
+                val pusdAsset = AssetName(ByteString.fromString("PUSD"))
+                val liquidatorUtxos = ctx.provider.findUtxos(liquidatorAddr).await(30.seconds) match
+                    case Right(found) => found
+                    case Left(error) => throw RuntimeException(s"Failed to query liquidator UTxOs: $error")
+                val liquidatorPusd = liquidatorUtxos.map(_._2.value.asset(ctx.policyId, pusdAsset)).sum
+                if liquidatorPusd < debtPusd then
+                    throw RuntimeException(
+                      s"Insufficient PUSD: liquidator has ${liquidatorPusd / 1_000_000.0} PUSD but needs ${debtPusd / 1_000_000.0} PUSD to cover debt"
+                    )
                 val now = Instant.now()
                 val builder = ctx.cdpTransactions.liquidateCdp(cdpUtxo, liquidatorAddr, now)
                 val completed = builder.complete(ctx.provider, liquidatorAddr).await(30.seconds)

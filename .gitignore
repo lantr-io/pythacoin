@@ -21,3 +21,6 @@ mnemonic.txt
 cardano-cli
 cardano-address
 blockfrost_api_key.txt
+/frontend/node_modules/
+/frontend/dist/
+/frontend/tsconfig.tsbuildinfo

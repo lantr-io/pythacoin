@@ -3,6 +3,7 @@ import { LtvBadge } from "./LtvBadge";
 
 interface Props {
   cdp: CdpInfo;
+  adaUsd: number | null;
   isOwner: boolean;
   onBorrow?: () => void;
   onRepay?: () => void;
@@ -18,19 +19,29 @@ function pusdToDisplay(p: number): string {
   return (p / 1_000_000).toFixed(2);
 }
 
+function computeLtv(cdp: CdpInfo, adaUsd: number | null): number {
+  if (!adaUsd || adaUsd <= 0) return 0;
+  const debtUsd = cdp.debtPusd / 1_000_000;
+  const collateralUsd = (cdp.collateralLovelace / 1_000_000) * adaUsd;
+  if (collateralUsd <= 0) return 0;
+  return (debtUsd / collateralUsd) * 100;
+}
+
 export function CdpCard({
   cdp,
+  adaUsd,
   isOwner,
   onBorrow,
   onRepay,
   onClose,
   onLiquidate,
 }: Props) {
+  const ltv = computeLtv(cdp, adaUsd);
   return (
     <div className="bg-pyth-card border border-pyth-border rounded-xl p-5">
       <div className="flex items-center justify-between mb-3">
         <span className="font-mono text-sm text-gray-400">{cdp.nftName}</span>
-        <LtvBadge ltv={cdp.ltv} />
+        <LtvBadge ltv={ltv} />
       </div>
       <div className="grid grid-cols-2 gap-3 text-sm mb-4">
         <div>
@@ -67,7 +78,7 @@ export function CdpCard({
             </button>
           </>
         )}
-        {!isOwner && cdp.ltv > 90 && (
+        {!isOwner && ltv > 90 && (
           <button
             onClick={onLiquidate}
             className="flex-1 bg-red-700 text-white text-xs py-1.5 rounded hover:bg-red-600 transition"

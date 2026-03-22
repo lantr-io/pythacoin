@@ -150,6 +150,7 @@ export default function App() {
           <OpenCdpForm
             address={wallet.address}
             adaUsd={price?.adaUsd ?? null}
+            balanceLovelace={wallet.balanceLovelace}
             onSuccess={refresh}
             signAndSubmit={signAndSubmit}
           />

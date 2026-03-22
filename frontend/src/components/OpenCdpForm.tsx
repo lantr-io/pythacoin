@@ -5,11 +5,12 @@ import { LtvBadge } from "./LtvBadge";
 interface Props {
   address: string;
   adaUsd: number | null;
+  balanceLovelace: number | null;
   onSuccess: () => void;
   signAndSubmit: (txHex: string) => Promise<string>;
 }
 
-export function OpenCdpForm({ address, adaUsd, onSuccess, signAndSubmit }: Props) {
+export function OpenCdpForm({ address, adaUsd, balanceLovelace, onSuccess, signAndSubmit }: Props) {
   const [collateral, setCollateral] = useState("");
   const [borrow, setBorrow] = useState("");
   const [loading, setLoading] = useState(false);
@@ -48,52 +49,71 @@ export function OpenCdpForm({ address, adaUsd, onSuccess, signAndSubmit }: Props
   };
 
   return (
-    <form
-      onSubmit={handleSubmit}
-      className="bg-pyth-card border border-pyth-border rounded-xl p-5"
-    >
-      <div className="flex items-center justify-between mb-4">
-        <h2 className="font-semibold">Open CDP</h2>
+    <form onSubmit={handleSubmit} className="space-y-4">
+      <div className="flex items-center justify-between">
+        <h2 className="font-semibold text-lg">Open CDP</h2>
         {(borrowNum > 0 || collateralNum > 0) && <LtvBadge ltv={ltv} />}
       </div>
-      <div className="space-y-3">
-        <div>
-          <label className="text-sm text-gray-400 block mb-1">
-            Borrow (PUSD)
-          </label>
+
+      {/* Borrow amount card */}
+      <div className="bg-pyth-card border border-pyth-border rounded-xl p-5">
+        <label className="text-sm text-pyth-purple font-medium block mb-3">
+          Borrow Amount
+        </label>
+        <div className="flex items-end justify-between gap-4">
           <input
             type="number"
             step="0.01"
             value={borrow}
-            onChange={(e) => setBorrow(e.target.value)}
-            className="w-full bg-pyth-dark border border-pyth-border rounded px-3 py-2 text-sm"
-            placeholder="500"
+            onChange={(e) => {
+              setBorrow(e.target.value);
+              const b = parseFloat(e.target.value);
+              if (b > 0 && adaUsd && adaUsd > 0) {
+                setCollateral((2 * b / adaUsd).toFixed(2));
+              }
+            }}
+            className="bg-transparent text-3xl font-semibold w-full outline-none [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
+            placeholder="0"
             required
           />
+          <span className="text-lg font-semibold shrink-0">PUSD</span>
         </div>
-        <div>
-          <label className="text-sm text-gray-400 block mb-1">
-            Collateral (ADA)
+      </div>
+
+      {/* Collateral amount card */}
+      <div className="bg-pyth-card border border-pyth-border rounded-xl p-5">
+        <div className="flex items-center justify-between mb-3">
+          <label className="text-sm text-gray-400 font-medium">
+            Collateral Amount
           </label>
+          {balanceLovelace != null && (
+            <span className="text-sm text-gray-500">
+              {(balanceLovelace / 1_000_000).toFixed(2)} ADA available
+            </span>
+          )}
+        </div>
+        <div className="flex items-end justify-between gap-4">
           <input
             type="number"
             step="0.01"
             value={collateral}
             onChange={(e) => setCollateral(e.target.value)}
-            className="w-full bg-pyth-dark border border-pyth-border rounded px-3 py-2 text-sm"
-            placeholder="1000"
+            className="bg-transparent text-3xl font-semibold w-full outline-none [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
+            placeholder="0"
             required
           />
+          <span className="text-lg font-semibold shrink-0">ADA</span>
         </div>
-        {error && <p className="text-red-400 text-sm">{error}</p>}
-        <button
-          type="submit"
-          disabled={loading}
-          className="w-full bg-pyth-purple py-2 rounded font-semibold text-sm hover:opacity-90 transition disabled:opacity-50"
-        >
-          {loading ? "Building tx..." : "Open CDP"}
-        </button>
       </div>
+
+      {error && <p className="text-red-400 text-sm">{error}</p>}
+      <button
+        type="submit"
+        disabled={loading}
+        className="w-full bg-pyth-purple py-3 rounded-xl font-semibold hover:opacity-90 transition disabled:opacity-50"
+      >
+        {loading ? "Building tx..." : "Open CDP"}
+      </button>
     </form>
   );
 }

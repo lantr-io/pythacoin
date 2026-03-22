@@ -16,8 +16,9 @@ export function TopBar({ connected, address, onConnect, onDisconnect }: Props) {
       <div className="flex items-baseline gap-4">
         <h1 className="text-xl font-bold">Pythacoin</h1>
         {price && (
-          <span className="text-sm text-gray-400">
-            ADA/USD ${price.adaUsd.toFixed(4)}
+          <span className="text-base text-gray-200">
+            ADA/USD <span className="font-semibold">${price.adaUsd.toFixed(4)}</span>
+            <span className="text-xs text-gray-500 ml-1">via Pyth</span>
           </span>
         )}
       </div>

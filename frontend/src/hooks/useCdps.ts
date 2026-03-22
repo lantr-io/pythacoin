@@ -5,5 +5,6 @@ export function useCdps() {
   return useQuery({
     queryKey: ["cdps"],
     queryFn: api.listCdps,
+    refetchInterval: 10_000,
   });
 }

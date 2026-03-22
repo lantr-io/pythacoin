@@ -25,7 +25,7 @@ class PythClient(
 
     /** Fetch signed price update bytes from Pyth Lazer REST API. */
     def fetchPriceUpdate(): ByteString = {
-        Log.info("Fetching price update from Pyth Lazer...")
+//        Log.info("Fetching price update from Pyth Lazer...")
         val requestBody =
             s"""{"priceFeedIds":[16],"properties":["price"],"formats":["solana"],"channel":"fixed_rate@200ms"}"""
         val response = basicRequest
@@ -40,7 +40,7 @@ class PythClient(
             case Right(body) =>
                 val encoding = extractSolanaEncoding(body)
                 val data = extractSolanaData(body)
-                Log.info(s"Pyth Lazer response encoding=$encoding, data length=${data.length}")
+//                Log.info(s"Pyth Lazer response encoding=$encoding, data length=${data.length}")
                 encoding match
                     case "base64" => ByteString.fromArray(Base64.getDecoder.decode(data))
                     case _        => ByteString.fromHex(data)
@@ -129,9 +129,22 @@ class PythClient(
         val start = idx + cborKey.length
         val end = json.indexOf('"', start)
         val cborHex = json.substring(start, end)
-        val script = Script.PlutusV3(ByteString.fromHex(cborHex))
-        Log.info(s"Fetched script, hash=${script.scriptHash.toHex}, size=${cborHex.length / 2} bytes")
-        script
+        val rawBytes = ByteString.fromHex(cborHex)
+        Log.info(s"Script CBOR: hexLen=${cborHex.length}, bytes=${rawBytes.size}, expected serialised_size=2745")
+        Log.info(s"Script CBOR first 10 hex: ${cborHex.take(20)}, last 10 hex: ${cborHex.takeRight(20)}")
+
+        // Blockfrost returns the CBOR-encoded script.
+        // Try raw first, if hash doesn't match try CBOR-unwrapping one layer.
+        val script = Script.PlutusV3(rawBytes)
+        if script.scriptHash.toHex == hashHex then
+            Log.info(s"Script hash matches: $hashHex (${rawBytes.size} bytes)")
+            script
+        else
+            Log.info(s"Raw hash ${script.scriptHash.toHex} != $hashHex, trying CBOR unwrap...")
+            val inner = scalus.serialization.cbor.Cbor.decode[Array[Byte]](rawBytes.bytes)
+            val script2 = Script.PlutusV3(ByteString.unsafeFromArray(inner))
+            Log.info(s"After unwrap: hash=${script2.scriptHash.toHex}, expected=$hashHex, size=${inner.length} bytes")
+            script2
     }
 
     /** Build the StakeAddress for the Pyth withdraw script. */

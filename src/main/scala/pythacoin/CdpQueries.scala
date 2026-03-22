@@ -31,7 +31,7 @@ class CdpQueries(ctx: AppCtx) {
 
     /** Find the UTxO for a specific CDP by NFT name. */
     def findCdpUtxo(nftName: String): Option[Utxo] = {
-        val nftAsset = AssetName(ByteString.fromString(nftName))
+        val nftAsset = AssetName(ByteString.fromHex(nftName))
         val utxos = ctx.provider.findUtxos(ctx.scriptAddr).await(30.seconds) match
             case Right(found) => found
             case Left(error) => throw RuntimeException(s"Failed to query CDPs: $error")

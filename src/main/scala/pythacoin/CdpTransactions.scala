@@ -38,7 +38,7 @@ class CdpTransactions(ctx: AppCtx, pythClient: PythClient)(using CardanoInfo) {
         txBuilder
             .references(pythState)
             .withdrawRewards(pythWithdrawAddr, Coin(0), pythWitness)
-            .validFrom(now)
+            .validFrom(now.minusSeconds(60))
             .validTo(now.plusSeconds(120))
             .mint(
               ctx.cdpScript,
@@ -68,7 +68,7 @@ class CdpTransactions(ctx: AppCtx, pythClient: PythClient)(using CardanoInfo) {
         txBuilder
             .references(pythState)
             .withdrawRewards(pythWithdrawAddr, Coin(0), pythWitness)
-            .validFrom(now)
+            .validFrom(now.minusSeconds(60))
             .validTo(now.plusSeconds(120))
             .spend(cdpUtxo, CdpAction.Borrow, ctx.cdpScript)
             .mint(ctx.cdpScript, Map(pusdAsset -> additionalPusd), CdpAction.Borrow)
@@ -93,7 +93,7 @@ class CdpTransactions(ctx: AppCtx, pythClient: PythClient)(using CardanoInfo) {
         val collateral = cdpUtxo.output.value.coin.value
 
         txBuilder
-            .validFrom(now)
+            .validFrom(now.minusSeconds(60))
             .validTo(now.plusSeconds(120))
             .spend(cdpUtxo, CdpAction.Repay, ctx.cdpScript)
             .mint(ctx.cdpScript, Map(pusdAsset -> -repayAmount), CdpAction.Repay)
@@ -116,7 +116,7 @@ class CdpTransactions(ctx: AppCtx, pythClient: PythClient)(using CardanoInfo) {
         val collateral = cdpUtxo.output.value.coin.value
 
         txBuilder
-            .validFrom(now)
+            .validFrom(now.minusSeconds(60))
             .validTo(now.plusSeconds(120))
             .spend(cdpUtxo, CdpAction.Close, ctx.cdpScript)
             .mint(
@@ -141,7 +141,7 @@ class CdpTransactions(ctx: AppCtx, pythClient: PythClient)(using CardanoInfo) {
         txBuilder
             .references(pythState)
             .withdrawRewards(pythWithdrawAddr, Coin(0), pythWitness)
-            .validFrom(now)
+            .validFrom(now.minusSeconds(60))
             .validTo(now.plusSeconds(120))
             .spend(cdpUtxo, CdpAction.Liquidate, ctx.cdpScript)
             .mint(
@@ -160,14 +160,23 @@ class CdpTransactions(ctx: AppCtx, pythClient: PythClient)(using CardanoInfo) {
         Log.info(s"Pyth withdraw address: ${pythWithdrawAddr.toBech32}")
         val updateBytes = pythClient.fetchPriceUpdate()
         Log.info(s"Price update bytes: ${updateBytes.size} bytes")
+        // Fetch script and enrich the UTxO with scriptRef (Blockfrost doesn't populate it)
         val withdrawScript = pythClient.fetchScript(withdrawHash)
+        val enrichedOutput = TransactionOutput.Babbage(
+          pythState.output.address,
+          pythState.output.value,
+          pythState.output.datumOption,
+          Some(ScriptRef(withdrawScript))
+        )
+        val enrichedPythState = Utxo(pythState.input, enrichedOutput)
 
         import scalus.cardano.onchain.plutus.prelude.List as PList
         val pythRedeemer: Data = Data.List(PList(Data.B(updateBytes)))
-        val pythWitness = TwoArgumentPlutusScriptWitness.attached(withdrawScript, _ => pythRedeemer)
+        // Use reference script from Pyth State UTxO (not attached) - Conway requires this
+        val pythWitness = TwoArgumentPlutusScriptWitness.reference(_ => pythRedeemer)
         Log.info("Pyth info fetched successfully")
 
-        (pythState, pythWithdrawAddr, updateBytes, pythWitness)
+        (enrichedPythState, pythWithdrawAddr, updateBytes, pythWitness)
     }
 
     /** Parse CdpDatum from a CDP UTxO's inline datum. */

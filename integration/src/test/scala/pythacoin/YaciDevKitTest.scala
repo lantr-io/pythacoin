@@ -14,6 +14,10 @@ trait YaciDevKitTest extends YaciDevKit { self: Suite =>
           "aabbccddaabbccddaabbccddaabbccddaabbccddaabbccddaabbccdd"
         )
         val cdpScript = CdpContract(pythPolicyId)
-        new AppCtx(context.cardanoInfo, context.provider, pythPolicyId, cdpScript)
+        new AppCtx(
+          context.cardanoInfo, context.provider,
+          "", "http://localhost:8080/api/v1",
+          pythPolicyId, "", cdpScript
+        )
     }
 }

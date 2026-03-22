@@ -127,6 +127,7 @@ class Server(ctx: AppCtx):
             try
                 val updateBytes = ctx.pythClient.fetchPriceUpdate()
                 val price = ctx.pythClient.parsePrice(updateBytes)
+                Log.info(s"Fetched price from Pyth Lazer: $price USD/ADA")
                 Right(PriceInfo(
                   adaUsd = price.toDouble,
                   timestamp = Instant.now().toString

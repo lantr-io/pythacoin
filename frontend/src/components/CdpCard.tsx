@@ -19,6 +19,14 @@ function pusdToDisplay(p: number): string {
   return (p / 1_000_000).toFixed(2);
 }
 
+function hexToUtf8(hex: string): string {
+  const bytes = new Uint8Array(hex.length / 2);
+  for (let i = 0; i < hex.length; i += 2) {
+    bytes[i / 2] = parseInt(hex.substring(i, i + 2), 16);
+  }
+  return new TextDecoder().decode(bytes);
+}
+
 function computeLtv(cdp: CdpInfo, adaUsd: number | null): number {
   if (!adaUsd || adaUsd <= 0) return 0;
   const debtUsd = cdp.debtPusd / 1_000_000;
@@ -40,7 +48,7 @@ export function CdpCard({
   return (
     <div className="bg-pyth-card border border-pyth-border rounded-xl p-5">
       <div className="flex items-center justify-between gap-2 mb-3">
-        <span className="font-mono text-sm text-gray-400 truncate min-w-0">{cdp.nftName}</span>
+        <span className="font-mono text-sm text-gray-400 truncate min-w-0">{hexToUtf8(cdp.nftName)}</span>
         <LtvBadge ltv={ltv} />
       </div>
       <div className="grid grid-cols-2 gap-3 text-sm mb-4">

@@ -21,6 +21,7 @@ lazy val core = (project in file("."))
         // Tapir for API definition
         "com.softwaremill.sttp.tapir" %% "tapir-netty-server-sync" % "1.13.10",
         "com.softwaremill.sttp.tapir" %% "tapir-swagger-ui-bundle" % "1.13.10",
+        "com.softwaremill.sttp.tapir" %% "tapir-json-upickle" % "1.13.10",
         // Argument parsing
         "com.monovore" %% "decline" % "2.6.0",
         "org.slf4j" % "slf4j-simple" % "2.0.17"

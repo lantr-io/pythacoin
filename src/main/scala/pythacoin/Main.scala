@@ -36,7 +36,10 @@ object Cli:
         val pythPolicyId = System.getenv("PYTH_POLICY_ID") match
             case null => sys.error("PYTH_POLICY_ID environment variable is not set")
             case id   => id
-        val appCtx = AppCtx(Network.Testnet, blockfrostApiKey, pythPolicyId)
+        val pythKey = System.getenv("PYTH_KEY") match
+            case null => sys.error("PYTH_KEY environment variable is not set")
+            case key  => key
+        val appCtx = AppCtx(Network.Testnet, blockfrostApiKey, pythPolicyId, pythKey)
         println("Starting the Pythacoin server...")
         Server(appCtx).start()
     }

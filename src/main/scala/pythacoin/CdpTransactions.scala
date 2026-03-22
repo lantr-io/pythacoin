@@ -157,10 +157,11 @@ class CdpTransactions(ctx: AppCtx, pythClient: PythClient)(using CardanoInfo) {
         val withdrawHash = pythClient.extractWithdrawScript(pythState)
         val pythWithdrawAddr = StakeAddress(ctx.cardanoInfo.network, StakePayload.Script(withdrawHash))
         val updateBytes = pythClient.fetchPriceUpdate()
+        val withdrawScript = pythClient.fetchScript(withdrawHash)
 
         import scalus.cardano.onchain.plutus.prelude.List as PList
         val pythRedeemer: Data = Data.List(PList(Data.B(updateBytes)))
-        val pythWitness = TwoArgumentPlutusScriptWitness.reference(_ => pythRedeemer)
+        val pythWitness = TwoArgumentPlutusScriptWitness.attached(withdrawScript, _ => pythRedeemer)
 
         (pythState, pythWithdrawAddr, updateBytes, pythWitness)
     }

@@ -94,6 +94,29 @@ class PythClient(
         ScriptHash.fromHex(withdrawScriptBs.toHex)
     }
 
+    /** Fetch the Pyth withdraw PlutusScript from Blockfrost by script hash. */
+    def fetchScript(scriptHash: ScriptHash): PlutusScript = {
+        val hashHex = scriptHash.toHex
+        val response = basicRequest
+            .get(uri"$blockfrostBaseUrl/scripts/$hashHex/cbor")
+            .header("project_id", blockfrostApiKey)
+            .send(backend)
+            .await(30.seconds)
+
+        val json = response.body match
+            case Right(body) => body
+            case Left(error) => throw RuntimeException(s"Failed to fetch script $hashHex: $error")
+
+        // Extract cbor field from {"cbor":"..."}
+        val cborKey = "\"cbor\":\""
+        val idx = json.indexOf(cborKey)
+        if idx < 0 then throw RuntimeException(s"No cbor field in response: $json")
+        val start = idx + cborKey.length
+        val end = json.indexOf('"', start)
+        val cborHex = json.substring(start, end)
+        Script.PlutusV3(ByteString.fromHex(cborHex))
+    }
+
     /** Build the StakeAddress for the Pyth withdraw script. */
     def pythWithdrawAddress(network: Network): StakeAddress = {
         val pythState = fetchPythState()

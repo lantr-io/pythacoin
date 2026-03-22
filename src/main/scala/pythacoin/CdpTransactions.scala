@@ -38,8 +38,8 @@ class CdpTransactions(ctx: AppCtx, pythClient: PythClient)(using CardanoInfo) {
         txBuilder
             .references(pythState)
             .withdrawRewards(pythWithdrawAddr, Coin(0), pythWitness)
-            .validFrom(now.minusSeconds(60))
-            .validTo(now.plusSeconds(120))
+            .validFrom(now.minusSeconds(600))
+            .validTo(now.plusSeconds(600))
             .mint(
               ctx.cdpScript,
               Map(nftName -> 1L, pusdAsset -> debtPusd),
@@ -68,8 +68,8 @@ class CdpTransactions(ctx: AppCtx, pythClient: PythClient)(using CardanoInfo) {
         txBuilder
             .references(pythState)
             .withdrawRewards(pythWithdrawAddr, Coin(0), pythWitness)
-            .validFrom(now.minusSeconds(60))
-            .validTo(now.plusSeconds(120))
+            .validFrom(now.minusSeconds(600))
+            .validTo(now.plusSeconds(600))
             .spend(cdpUtxo, CdpAction.Borrow, ctx.cdpScript)
             .mint(ctx.cdpScript, Map(pusdAsset -> additionalPusd), CdpAction.Borrow)
             .payTo(
@@ -93,8 +93,8 @@ class CdpTransactions(ctx: AppCtx, pythClient: PythClient)(using CardanoInfo) {
         val collateral = cdpUtxo.output.value.coin.value
 
         txBuilder
-            .validFrom(now.minusSeconds(60))
-            .validTo(now.plusSeconds(120))
+            .validFrom(now.minusSeconds(600))
+            .validTo(now.plusSeconds(600))
             .spend(cdpUtxo, CdpAction.Repay, ctx.cdpScript)
             .mint(ctx.cdpScript, Map(pusdAsset -> -repayAmount), CdpAction.Repay)
             .payTo(
@@ -116,8 +116,8 @@ class CdpTransactions(ctx: AppCtx, pythClient: PythClient)(using CardanoInfo) {
         val collateral = cdpUtxo.output.value.coin.value
 
         txBuilder
-            .validFrom(now.minusSeconds(60))
-            .validTo(now.plusSeconds(120))
+            .validFrom(now.minusSeconds(600))
+            .validTo(now.plusSeconds(600))
             .spend(cdpUtxo, CdpAction.Close, ctx.cdpScript)
             .mint(
               ctx.cdpScript,
@@ -141,8 +141,8 @@ class CdpTransactions(ctx: AppCtx, pythClient: PythClient)(using CardanoInfo) {
         txBuilder
             .references(pythState)
             .withdrawRewards(pythWithdrawAddr, Coin(0), pythWitness)
-            .validFrom(now.minusSeconds(60))
-            .validTo(now.plusSeconds(120))
+            .validFrom(now.minusSeconds(600))
+            .validTo(now.plusSeconds(600))
             .spend(cdpUtxo, CdpAction.Liquidate, ctx.cdpScript)
             .mint(
               ctx.cdpScript,

@@ -5,5 +5,6 @@ export function usePrice() {
   return useQuery({
     queryKey: ["price"],
     queryFn: api.getPrice,
+    refetchInterval: 1000,
   });
 }

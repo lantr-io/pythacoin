@@ -6,6 +6,17 @@ import scalus.cardano.address.Network
 enum Cmd:
     case Blueprint, Start
 
+/** CLI entry point using decline for argument parsing.
+  *
+  * Two commands:
+  * - `blueprint`: prints the compiled script hash and size (uses a dummy Pyth policy ID)
+  * - `start`: launches the HTTP server on port 8088
+  *
+  * The `start` command reads configuration from environment variables:
+  * - BLOCKFROST_API_KEY: Blockfrost project ID for chain queries and tx submission
+  * - PYTH_POLICY_ID: hex-encoded Pyth oracle deployment policy ID on the target network
+  * - PYTH_KEY: bearer token for the Pyth Lazer REST API
+  */
 object Cli:
     private val command = {
         val blueprintCommand = Opts.subcommand("blueprint", "Prints the contract blueprint JSON") {
@@ -21,6 +32,7 @@ object Cli:
         )
     }
 
+    /** Print script hash and size for a dummy parameterization (useful for CI/debugging). */
     private def blueprint(): Unit = {
         val pythPolicyId = "0000000000000000000000000000000000000000000000000000000000"
         val script = CdpContract(scalus.uplc.builtin.ByteString.fromHex(pythPolicyId))
@@ -28,6 +40,7 @@ object Cli:
         println(s"Script size: ${script.program.cborEncoded.length} bytes")
     }
 
+    /** Start the HTTP server connected to preprod via Blockfrost. */
     @main
     def start(): Unit = {
         val blockfrostApiKey = System.getenv("BLOCKFROST_API_KEY") match

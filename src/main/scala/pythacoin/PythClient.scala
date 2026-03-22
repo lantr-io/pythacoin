@@ -13,6 +13,18 @@ import scala.concurrent.ExecutionContext.Implicits.global
 import scala.concurrent.Future
 import scala.concurrent.duration.*
 
+/** Client for interacting with the Pyth oracle on Cardano.
+  *
+  * Handles two concerns:
+  * 1. Fetching signed price updates from the Pyth Lazer REST API (off-chain data source)
+  * 2. Looking up the Pyth State UTxO and withdraw script on-chain via Blockfrost
+  *
+  * The Pyth integration pattern on Cardano uses a "withdrawal trick":
+  * - A Pyth State UTxO holds the withdraw script hash in its datum
+  * - Transactions include the price update as a withdrawal redeemer
+  * - The Pyth withdraw script validates the signature on the price data
+  * - Our CDP validator reads the price from the withdrawal redeemer (no sig verification needed)
+  */
 class PythClient(
     pythPolicyId: ScriptHash,
     pythKey: String,
@@ -106,7 +118,12 @@ class PythClient(
         hash
     }
 
-    /** Fetch the Pyth withdraw PlutusScript from Blockfrost by script hash. */
+    /** Fetch the Pyth withdraw PlutusScript from Blockfrost by script hash.
+      *
+      * Blockfrost returns CBOR-wrapped script bytes. Sometimes the hash of the raw bytes
+      * doesn't match because Blockfrost double-wraps the CBOR. We try raw first, then
+      * unwrap one CBOR layer if the hash doesn't match.
+      */
     def fetchScript(scriptHash: ScriptHash): PlutusScript = {
         val hashHex = scriptHash.toHex
         Log.info(s"Fetching script CBOR from Blockfrost: $hashHex")
@@ -122,7 +139,6 @@ class PythClient(
                 Log.error(s"Failed to fetch script $hashHex: $error")
                 throw RuntimeException(s"Failed to fetch script $hashHex: $error")
 
-        // Extract cbor field from {"cbor":"..."}
         val cborKey = "\"cbor\":\""
         val idx = json.indexOf(cborKey)
         if idx < 0 then throw RuntimeException(s"No cbor field in response: $json")
@@ -133,13 +149,12 @@ class PythClient(
         Log.info(s"Script CBOR: hexLen=${cborHex.length}, bytes=${rawBytes.size}, expected serialised_size=2745")
         Log.info(s"Script CBOR first 10 hex: ${cborHex.take(20)}, last 10 hex: ${cborHex.takeRight(20)}")
 
-        // Blockfrost returns the CBOR-encoded script.
-        // Try raw first, if hash doesn't match try CBOR-unwrapping one layer.
         val script = Script.PlutusV3(rawBytes)
         if script.scriptHash.toHex == hashHex then
             Log.info(s"Script hash matches: $hashHex (${rawBytes.size} bytes)")
             script
         else
+            // Blockfrost sometimes double-CBOR-wraps the script — unwrap one layer
             Log.info(s"Raw hash ${script.scriptHash.toHex} != $hashHex, trying CBOR unwrap...")
             val inner = scalus.serialization.cbor.Cbor.decode[Array[Byte]](rawBytes.bytes)
             val script2 = Script.PlutusV3(ByteString.unsafeFromArray(inner))
@@ -154,18 +169,22 @@ class PythClient(
         StakeAddress(network, StakePayload.Script(withdrawHash))
     }
 
-    /** Parse price from update bytes for display (off-chain, mirrors on-chain logic). */
+    /** Parse ADA/USD price from Pyth update bytes for display (off-chain).
+      * Mirrors the on-chain parsePythPrice logic but uses JVM ByteBuffer for convenience.
+      * Returns price as a BigDecimal (e.g. 0.7523 for $0.7523/ADA).
+      */
     def parsePrice(updateBytes: ByteString): BigDecimal = {
         import java.nio.{ByteBuffer, ByteOrder}
         val buf = ByteBuffer.wrap(updateBytes.bytes).order(ByteOrder.LITTLE_ENDIAN)
-        // Skip envelope: 4 magic + 64 sig + 32 key = 100 bytes, then 2 bytes payload size
-        // Feed starts at offset 116
+        // Solana envelope: [4 magic][64 sig][32 key][2 payload_size] = 102 bytes
+        // Payload header:  [4 magic][8 timestamp][1 channel][1 feeds_len] = 14 bytes
+        // Feed starts at 102 + 14 = 116
         val feedOffset = 116
-        // Skip feed_id (4) + props_len (1) + prop_id (1) = 6 bytes
+        // Feed: [4 feed_id][1 props_len][1 prop_id][8 price I64 LE]
         val priceOffset = feedOffset + 6
         buf.position(priceOffset)
-        val priceRaw = buf.getLong() // I64 LE
-        BigDecimal(priceRaw) / BigDecimal(100_000_000L)
+        val priceRaw = buf.getLong()
+        BigDecimal(priceRaw) / BigDecimal(100_000_000L) // exponent = -8
     }
 
     /** Extract the solana.encoding field from JSON response. */

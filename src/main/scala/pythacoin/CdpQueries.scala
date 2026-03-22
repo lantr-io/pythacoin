@@ -9,6 +9,10 @@ import scalus.utils.await
 import scala.concurrent.ExecutionContext.Implicits.global
 import scala.concurrent.duration.*
 
+/** Read-only queries against the blockchain to discover and inspect CDPs.
+  * All CDPs live at the script address and are identified by a unique NFT
+  * under the script's policy ID.
+  */
 class CdpQueries(ctx: AppCtx) {
 
     private val policyId = ctx.policyId
@@ -65,6 +69,9 @@ class CdpQueries(ctx: AppCtx) {
     }
 }
 
+/** CDP state returned by the /cdps endpoint.
+  * LTV is set to 0 here — the frontend computes it using the current price.
+  */
 case class CdpInfo(
     nftName: String,
     owner: String,
@@ -73,6 +80,9 @@ case class CdpInfo(
     ltv: Double
 ) derives upickle.default.ReadWriter
 
+/** Current ADA/USD price returned by the /price endpoint.
+  * Includes the policy ID so the frontend can identify PUSD tokens in the wallet.
+  */
 case class PriceInfo(
     adaUsd: Double,
     timestamp: String,

@@ -24,8 +24,13 @@ import scala.concurrent.ExecutionContext.Implicits.global
 import scala.concurrent.Future
 import scala.concurrent.duration.*
 
+/** Global sttp HTTP backend used by PythClient and BlockfrostProvider. */
 given sttp.client4.Backend[Future] = DefaultFutureBackend()
 
+/** Application context holding all shared state and services.
+  * Lazily initializes derived objects (policy ID, script address, clients)
+  * so that construction is fast and initialization errors surface at first use.
+  */
 case class AppCtx(
     cardanoInfo: CardanoInfo,
     provider: BlockchainProvider,
@@ -35,7 +40,9 @@ case class AppCtx(
     pythKey: String,
     cdpScript: PlutusV3[Data => Unit]
 ) {
+    /** The script hash doubles as the minting policy ID for PUSD and CDP NFTs. */
     lazy val policyId: ScriptHash = cdpScript.script.scriptHash
+    /** The script address where all CDP UTxOs live. */
     lazy val scriptAddr: Address = cdpScript.address(cardanoInfo.network)
     lazy val pythClient: PythClient = PythClient(pythPolicyId, pythKey, blockfrostApiKey, blockfrostBaseUrl, provider)
     lazy val cdpQueries: CdpQueries = CdpQueries(this)
@@ -47,6 +54,7 @@ case class AppCtx(
 
 object AppCtx {
 
+    /** Create AppCtx for mainnet or preprod using Blockfrost as the chain provider. */
     def apply(
         network: ScalusNetwork,
         blockfrostApiKey: String,
@@ -66,6 +74,7 @@ object AppCtx {
         new AppCtx(provider.cardanoInfo, provider, blockfrostApiKey, baseUrl, pythPolicy, pythKey, cdpScript)
     }
 
+    /** Create AppCtx for local development using Yaci DevKit (no real Pyth oracle). */
     def yaciDevKit(pythPolicyIdHex: String): AppCtx = {
         val provider = BlockfrostProvider.localYaci().await(30.seconds)
         val pythPolicy = ScriptHash.fromHex(pythPolicyIdHex)
@@ -76,6 +85,9 @@ object AppCtx {
 }
 
 // --- Request/Response types ---
+// All amounts in the API use human-readable units (ADA, PUSD) as doubles.
+// The server converts to lovelace (1 ADA = 1_000_000 lovelace) internally.
+// Addresses can be CIP-30 hex (from wallet) or bech32 (addr1...).
 
 case class OpenCdpRequest(
     collateralAda: Double,
@@ -84,14 +96,14 @@ case class OpenCdpRequest(
 ) derives upickle.default.ReadWriter
 
 case class BorrowRequest(
-    nftName: String,
-    amount: Double,
+    nftName: String,   // hex-encoded NFT asset name
+    amount: Double,    // additional PUSD to borrow
     ownerAddress: String
 ) derives upickle.default.ReadWriter
 
 case class RepayRequest(
     nftName: String,
-    amount: Double,
+    amount: Double,    // PUSD to repay
     ownerAddress: String
 ) derives upickle.default.ReadWriter
 
@@ -105,23 +117,36 @@ case class LiquidateRequest(
     liquidatorAddress: String
 ) derives upickle.default.ReadWriter
 
+/** Response containing an unsigned transaction CBOR for the frontend to sign. */
 case class TxResponse(
     txCborHex: String
 ) derives upickle.default.ReadWriter
 
+/** Request to merge wallet witness with unsigned tx and submit to the chain. */
 case class SubmitTxRequest(
-    txCborHex: String,
-    witnessCborHex: String
+    txCborHex: String,      // unsigned tx CBOR from the build step
+    witnessCborHex: String   // CIP-30 signTx result (TransactionWitnessSet CBOR)
 ) derives upickle.default.ReadWriter
 
 case class SubmitTxResponse(
     txHash: String
 ) derives upickle.default.ReadWriter
 
+/** HTTP API server built with Tapir (served by Netty).
+  *
+  * Endpoints follow a build-then-sign pattern:
+  * 1. Frontend calls POST /cdp/open (or borrow/repay/close/liquidate) with parameters
+  * 2. Server builds an unsigned transaction and returns CBOR hex
+  * 3. Frontend signs via CIP-30 wallet (signTx with partial=true)
+  * 4. Frontend calls POST /tx/submit with unsigned tx + wallet witness
+  * 5. Server merges witnesses and submits to Blockfrost
+  *
+  * Auto-generated Swagger UI is available at /docs.
+  */
 class Server(ctx: AppCtx):
     private given CardanoInfo = ctx.cardanoInfo
 
-    /** Parse address from hex (CIP-30) or bech32 string. */
+    /** Parse address from hex (CIP-30 getUsedAddresses returns hex) or bech32 string. */
     private def parseAddress(addr: String): Address =
         val parsed = if addr.startsWith("addr") then Address.fromBech32(addr)
         else Address.fromBytes(addr.hexToBytes)
@@ -278,14 +303,16 @@ class Server(ctx: AppCtx):
                 val cdpUtxo = ctx.cdpQueries.findCdpUtxo(req.nftName).getOrElse(
                   throw RuntimeException(s"CDP not found: ${req.nftName}")
                 )
-                // Query liquidator UTxOs and check PUSD balance
+                // Pre-check: verify the liquidator has enough PUSD to cover the CDP's debt.
+                // We also collect the specific UTxOs containing PUSD so the tx builder can
+                // explicitly spend them (needed because PUSD lives at the liquidator's address,
+                // not at the script address, so automatic coin selection won't find them).
                 val datum = cdpUtxo.output.requireInlineDatum.to[pythacoin.onchain.CdpDatum]
                 val debtPusd = datum.debt.toLong
                 val pusdAsset = AssetName(ByteString.fromString("PUSD"))
                 val liquidatorUtxos = ctx.provider.findUtxos(liquidatorAddr).await(30.seconds) match
                     case Right(found) => found
                     case Left(error) => throw RuntimeException(s"Failed to query liquidator UTxOs: $error")
-                // Filter UTxOs that contain PUSD under our policy
                 val pusdUtxos = liquidatorUtxos.filter { case (_, output) =>
                     output.value.asset(ctx.policyId, pusdAsset) > 0
                 }
@@ -306,6 +333,10 @@ class Server(ctx: AppCtx):
         }
 
     // --- POST /tx/submit ---
+    // Merges the wallet's vkey witnesses (from CIP-30 signTx) into the unsigned transaction
+    // and submits the fully signed transaction to the chain via Blockfrost.
+    // This two-step pattern is needed because CIP-30 signTx(partial=true) returns only
+    // the user's witness set, not a complete signed transaction.
     private val submitTxEndpoint = endpoint.post
         .in("tx" / "submit")
         .in(jsonBody[SubmitTxRequest])
@@ -319,10 +350,12 @@ class Server(ctx: AppCtx):
                 given ProtocolVersion = ProtocolVersion.conwayPV
                 val unsignedTx = Transaction.fromCbor(req.txCborHex.hexToBytes)
                 Log.info(s"Parsed unsigned tx: ${unsignedTx.id.toHex}")
+                // Decode the wallet's TransactionWitnessSet from CBOR
                 val witnessBytes = req.witnessCborHex.hexToBytes
                 given OriginalCborByteArray = OriginalCborByteArray(witnessBytes)
                 val walletWitnesses = Cbor.decode[TransactionWitnessSet](witnessBytes)
                 Log.info(s"Wallet provided ${walletWitnesses.vkeyWitnesses.toSet.size} vkey witnesses")
+                // Merge wallet vkeys with any existing witnesses (e.g. from script evaluation)
                 val existing = unsignedTx.witnessSet
                 val mergedVkeys = TaggedSortedSet.from(
                   existing.vkeyWitnesses.toSet ++ walletWitnesses.vkeyWitnesses.toSet

@@ -15,6 +15,20 @@ import java.time.Instant
 import scala.concurrent.ExecutionContext.Implicits.global
 import scala.concurrent.duration.*
 
+/** Off-chain transaction builders for all CDP operations.
+  *
+  * Each method returns a partially-built TxBuilder that the caller completes via
+  * `builder.complete(provider, changeAddress)`, which handles coin selection,
+  * fee calculation, and collateral. The resulting unsigned transaction is then
+  * sent to the frontend for wallet signing.
+  *
+  * All transactions that read the oracle price include:
+  * - Pyth State UTxO as a reference input (provides the withdraw script hash)
+  * - A withdrawal with zero rewards to the Pyth withdraw script address
+  * - The price update bytes as the withdrawal redeemer
+  * This "withdrawal trick" lets the Pyth withdraw script verify the price signature
+  * once, and our validator can read the verified price from the redeemer.
+  */
 class CdpTransactions(ctx: AppCtx, pythClient: PythClient)(using CardanoInfo) {
 
     private val policyId = ctx.policyId
@@ -157,7 +171,16 @@ class CdpTransactions(ctx: AppCtx, pythClient: PythClient)(using CardanoInfo) {
             .payTo(liquidatorAddr, Value.lovelace(collateral))
     }
 
-    /** Fetch Pyth oracle state and build the withdrawal witness. */
+    /** Fetch Pyth oracle state and build the withdrawal witness.
+      *
+      * Returns everything needed to include a Pyth price in a transaction:
+      * 1. The enriched Pyth State UTxO (with scriptRef manually added, since Blockfrost
+      *    doesn't populate the scriptRef field on reference UTxOs)
+      * 2. The stake address of the Pyth withdraw script (for the zero-reward withdrawal)
+      * 3. The raw price update bytes (for off-chain display/logging)
+      * 4. A TwoArgumentPlutusScriptWitness using the reference script (Conway requires
+      *    using the reference script, not attaching a copy)
+      */
     private def fetchPythInfo(now: Instant): (Utxo, StakeAddress, ByteString, TwoArgumentPlutusScriptWitness) = {
         Log.info("Fetching Pyth oracle info...")
         val pythState = pythClient.fetchPythState()
@@ -166,7 +189,7 @@ class CdpTransactions(ctx: AppCtx, pythClient: PythClient)(using CardanoInfo) {
         Log.info(s"Pyth withdraw address: ${pythWithdrawAddr.toBech32}")
         val updateBytes = pythClient.fetchPriceUpdate()
         Log.info(s"Price update bytes: ${updateBytes.size} bytes")
-        // Fetch script and enrich the UTxO with scriptRef (Blockfrost doesn't populate it)
+        // Blockfrost doesn't populate scriptRef on UTxOs, so we manually enrich it
         val withdrawScript = pythClient.fetchScript(withdrawHash)
         val enrichedOutput = TransactionOutput.Babbage(
           pythState.output.address,
@@ -176,9 +199,10 @@ class CdpTransactions(ctx: AppCtx, pythClient: PythClient)(using CardanoInfo) {
         )
         val enrichedPythState = Utxo(pythState.input, enrichedOutput)
 
+        // The Pyth redeemer is a list of price update byte arrays
         import scalus.cardano.onchain.plutus.prelude.List as PList
         val pythRedeemer: Data = Data.List(PList(Data.B(updateBytes)))
-        // Use reference script from Pyth State UTxO (not attached) - Conway requires this
+        // Conway requires using reference script (not attached) — ExtraneousScriptWitnessesUTXOW error otherwise
         val pythWitness = TwoArgumentPlutusScriptWitness.reference(_ => pythRedeemer)
         Log.info("Pyth info fetched successfully")
 

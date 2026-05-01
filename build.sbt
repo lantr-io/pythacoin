@@ -1,15 +1,18 @@
-val scalusVersion = "0.16.0"
-val scalusPluginVersion = scalusVersion
+val scalusVersion = "0.16.0+321-ec2fadfa-SNAPSHOT"
+// The scalus-plugin module uses CrossVersion.full so its artifact is
+// `scalus-plugin_3.3.7` (full Scala version), referenced literally
+// rather than via `%%`. Snapshot version tracks scalusVersion.
+val scalusNodeVersion = "0.0.0+89-6034a316-SNAPSHOT"
 
-resolvers += Resolver.sonatypeCentralSnapshots
+ThisBuild / resolvers += Resolver.sonatypeCentralSnapshots
 
 // Latest Scala 3 LTS version
 ThisBuild / scalaVersion := "3.3.7"
 
 ThisBuild / scalacOptions ++= Seq("-feature", "-deprecation", "-unchecked")
 
-// Add the Scalus compiler plugin
-addCompilerPlugin("org.scalus" %% "scalus-plugin" % scalusPluginVersion)
+// Add the Scalus compiler plugin.
+addCompilerPlugin("org.scalus" % "scalus-plugin_3.3.7" % scalusVersion)
 
 // Main application
 lazy val core = (project in file("."))
@@ -51,5 +54,23 @@ lazy val integration = (project in file("integration"))
         "com.dimafeng" %% "testcontainers-scala-scalatest" % "0.44.1" % Test,
         // Yaci DevKit for Cardano local devnet
         "com.bloxbean.cardano" % "yaci-cardano-test" % "0.1.0" % Test
+      )
+    )
+
+// Liquidation bot — autonomous keeper that follows the chain via the embedded
+// scalus-node and submits Liquidate transactions for under-collateralised CDPs.
+// See liquid-bot/doc/design.md.
+lazy val liquidBot = (project in file("liquid-bot"))
+    .dependsOn(core)
+    .settings(
+      publish / skip := true,
+      run / fork := true,
+      libraryDependencies ++= Seq(
+        "org.scalus" %% "scalus-streaming-ox" % scalusNodeVersion,
+        "org.scalus" %% "scalus-cardano-network" % scalusNodeVersion,
+        "org.scalus" %% "scalus-chain-store-rocksdb" % scalusNodeVersion,
+        "com.monovore" %% "decline" % "2.6.1",
+        "org.slf4j" % "slf4j-simple" % "2.0.17",
+        "org.scalatest" %% "scalatest" % "3.2.19" % Test
       )
     )

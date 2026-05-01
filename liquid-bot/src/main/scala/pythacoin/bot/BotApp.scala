@@ -129,7 +129,10 @@ object BotApp extends OxApp {
                 case Right(hash) =>
                     log.info(s"Liquidate submitted: txid=${hash.toHex} nft=${info.nftName}")
                 case Left(_: NodeSubmitError.UtxoNotAvailable) =>
-                    log.info(s"Liquidate raced and lost on ${info.nftName} — input already spent")
+                    // Could be the CDP itself (a competing liquidator won the race)
+                    // or one of our own PUSD UTxOs (spent by a prior liquidation
+                    // already in flight). Both are benign retry-on-next-event cases.
+                    log.info(s"Liquidate ${info.nftName}: a required input UTxO is no longer available")
                 case Left(other) =>
                     log.warn(s"Liquidate submit rejected for ${info.nftName}: ${other.message}")
         catch case e: Exception =>
@@ -160,7 +163,12 @@ object BotApp extends OxApp {
             .findUtxos(UtxoQuery(UtxoSource.FromAddress(ctx.wallet.address))) match
             case Right(found) =>
                 found.values.map(_.value.asset(ctx.policyId, pusdAsset)).sum
-            case Left(_) => 0L
+            case Left(err) =>
+                // Don't conflate "we couldn't ask" with "balance is zero" —
+                // operators reading the log would otherwise top up PUSD for no
+                // reason. Returning 0 still skips submission this pass.
+                log.warn(s"PUSD balance query failed (treating as 0 for this pass): $err")
+                0L
     }
 
     /** Parse the Pyth ADA/USD integer price from the update bytes. Mirrors

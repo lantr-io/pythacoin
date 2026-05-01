@@ -7,8 +7,7 @@ import scalus.cardano.node.stream.*
 import scalus.uplc.builtin.ByteString.utf8
 import scalus.utils.Hex.toHex
 
-import java.util.concurrent.ConcurrentHashMap
-import scala.jdk.CollectionConverters.*
+import scala.collection.concurrent.TrieMap
 
 /** Maintains a live view of every CDP UTxO at the script address, driven by the
   * embedded scalus-node's `BlockchainStreamProvider` callback API.
@@ -27,11 +26,12 @@ final class ChainFollower(ctx: BotCtx, onChange: Iterable[Utxo] => Unit) {
     private val log = LoggerFactory.getLogger(classOf[ChainFollower])
     private val pusdAsset = AssetName(utf8"PUSD")
 
-    /** Live view of CDP UTxOs keyed by `TransactionInput`. Concurrent because
-      * `RollBackward` handling races against an incoming `Created`/`Spent` event
-      * delivered on the same flow.
+    /** Live view of CDP UTxOs keyed by `TransactionInput`. `TrieMap.readOnlySnapshot`
+      * gives the consumer a frozen O(1) view of the map at the moment of the
+      * snapshot, so iteration in `onChange` can't race with concurrent
+      * `Created`/`Spent`/`RolledBack` events.
       */
-    private val cdpView = new ConcurrentHashMap[TransactionInput, TransactionOutput]()
+    private val cdpView = TrieMap.empty[TransactionInput, TransactionOutput]
 
     /** Subscribe to UTxO events at the CDP script address and run the callback
       * loop until the flow terminates. Blocks the calling (virtual) thread.
@@ -50,7 +50,7 @@ final class ChainFollower(ctx: BotCtx, onChange: Iterable[Utxo] => Unit) {
                 log.info(s"CDP created at ${at}: ${utxo.input.transactionId.toHex}#${utxo.input.index}")
                 onChange(snapshot)
         case UtxoEvent.Spent(utxo, spentBy, at) =>
-            if cdpView.remove(utxo.input) != null then
+            if cdpView.remove(utxo.input).isDefined then
                 log.info(s"CDP spent at ${at} by ${spentBy.toHex}: ${utxo.input.transactionId.toHex}#${utxo.input.index}")
                 onChange(snapshot)
         case UtxoEvent.RolledBack(to) =>
@@ -62,30 +62,37 @@ final class ChainFollower(ctx: BotCtx, onChange: Iterable[Utxo] => Unit) {
       * after every rollback. Cheap relative to a chain-sync, expensive relative
       * to processing a single event — but rollbacks are rare and correctness
       * matters more than throughput here.
+      *
+      * If the snapshot query fails, keep the previous view: a transient
+      * connectivity blip shouldn't wipe state we'd then have to wait for the
+      * next on-chain event to rediscover.
       */
     private def reseed(): Unit = {
         // OxBlockchainStreamProvider is direct-style (Id[A] = A), so no `.await`.
-        val fresh: Utxos = ctx.streamProvider
+        ctx.streamProvider
             .findUtxos(UtxoQuery(UtxoSource.FromAddress(ctx.scriptAddr))) match
-            case Right(found) => found
+            case Right(fresh: Utxos) =>
+                cdpView.clear()
+                for (input, output) <- fresh if isCdp(output) do cdpView.put(input, output)
             case Left(err) =>
-                log.error(s"Failed to re-seed CDP view: $err")
-                Map.empty
-        cdpView.clear()
-        for (input, output) <- fresh if isCdp(output) do cdpView.put(input, output)
+                log.error(s"Failed to re-seed CDP view (keeping previous view): $err")
     }
 
     /** A UTxO is a CDP iff it carries an inline datum and exactly one non-PUSD
-      * token under our policy (the CDP NFT). Mirrors `CdpQueries.parseCdpInfo`.
+      * token under our policy (the CDP NFT). Mirrors `CdpQueries.parseCdpInfo`
+      * and `CdpValidator.scala` which both rely on the one-NFT invariant.
       */
     private def isCdp(output: TransactionOutput): Boolean = {
         if output.inlineDatum.isEmpty then false
         else
             val assets = output.value.assets.assets.getOrElse(ctx.policyId, Map.empty)
-            assets.exists { case (name, _) => name != pusdAsset }
+            assets.count { case (name, _) => name != pusdAsset } == 1
     }
 
-    /** Snapshot the current view as immutable `Utxo`s for the consumer. */
+    /** Point-in-time snapshot of the CDP view. `readOnlySnapshot` is O(1) on
+      * `TrieMap` and immune to concurrent mutation during the consumer's
+      * iteration.
+      */
     private def snapshot: Iterable[Utxo] =
-        cdpView.entrySet().asScala.view.map(e => Utxo(e.getKey, e.getValue))
+        cdpView.readOnlySnapshot().iterator.map(Utxo.apply.tupled).toVector
 }

@@ -34,10 +34,13 @@ object LiquidationDecider {
       * the bot's available PUSD balance, and the minimum collateral the bot is
       * willing to accept after fees + minUtxo overhead.
       *
-      * `minProfitLovelace` is the operator's static proxy for `tx_fee + minUtxo`
-      * — actual fees are only known after `TxBuilder.complete`, so we filter
-      * upstream against a configured floor to avoid wasting fee budget on CDPs
-      * whose seized collateral can't pay for the liquidation transaction.
+      * Note: `minProfitLovelace` is misnamed — it's a **minimum collateral
+      * floor** (`cdp.collateralLovelace >= minProfitLovelace`), used as a
+      * static proxy for `tx_fee + minUtxo`. Actual fees are only known after
+      * `TxBuilder.complete`, so the operator picks a floor conservative enough
+      * to avoid wasting fee budget on CDPs that wouldn't pay for their own
+      * liquidation tx. The env-var name (`PYTHACOIN_MIN_PROFIT_LOVELACE`)
+      * is preserved for backwards compatibility.
       */
     def decide(
         cdp: CdpInfo,

@@ -44,18 +44,20 @@ self-minted PUSD reserves, multi-collateral.
 
 ## Components
 
-| Component             | Responsibility                                                                  |
-| --------------------- | ------------------------------------------------------------------------------- |
-| `BotApp`              | Decline CLI entry point (mirrors `Main.scala`).                                 |
-| `BotCtx`              | Wraps `BlockchainStreamProvider`, signing key, config, `cdpScript`.             |
-| `ChainFollower`       | Subscribes to script address, maintains CDP UTxO map, persists `ChainPoint`.    |
-| `LiquidationDecider`  | Pure: `(CdpInfo, Price, Config) ⇒ Skip \| Liquidate(reason)`.                   |
-| `PriceSource`         | Wraps `PythClient.fetchPriceUpdate()` — same path as the interactive flow.      |
-| `Wallet`              | Loads signing key (env `PYTHACOIN_BOT_KEY`), signs unsigned txs.                |
-| `Submitter`           | `provider.submit(signedTx)`, classifies rejections, retries with fresh snapshot.|
+| Component                       | Responsibility                                                                      |
+| ------------------------------- | ----------------------------------------------------------------------------------- |
+| `BotApp`                        | `OxApp` entry point: decline CLI, builds `BotConfig`, runs the chain follower.      |
+| `BotConfig`                     | Env-driven config (network, relay, signing key paths, thresholds, dry-run).         |
+| `BotCtx`                        | Wraps `BlockchainStreamProvider`, `AppCtx`, `Wallet`; `AutoCloseable`.              |
+| `ChainFollower`                 | Subscribes to script address, maintains CDP UTxO `TrieMap`, handles rollbacks.      |
+| `LiquidationDecider`            | Pure: `(CdpInfo, Price, Config) ⇒ Skip \| Liquidate(bps)`.                          |
+| `Wallet`                        | Loads signing key (env `PYTHACOIN_BOT_KEY`), signs unsigned txs via `TransactionSigner`. |
+| _(inline in `BotApp`)_          | Pyth fetch via `appCtx.pythClient.fetchPriceUpdate()`; submission via `streamProvider.submit`. |
 
 The bot is a thin scheduler — all on-chain semantics (oracle witness, validity window,
-mint quantities) live in `core`'s existing `CdpTransactions.liquidateCdp`.
+mint quantities) live in `commonLib`'s existing `CdpTransactions.liquidateCdp`. Dedicated
+`PriceSource` / `Submitter` types and a persisted `ChainPoint` store remain planned
+operational hardening rather than separate components today.
 
 ## Liquidation policy (v1)
 
@@ -93,20 +95,26 @@ just to alarm if the streamed view ever drifts from a fresh provider query.
 
 ## Configuration
 
-CLI / HOCON surface:
+`BotConfig.fromEnv()` reads the following environment variables (defaults in `[]`):
 
-```
-network             = preprod | mainnet
-provider.kind       = embedded | blockfrost
-provider.socket     = <path>          # embedded
-provider.chainStore = <path>          # embedded, rocksdb
-provider.apiKey     = <env>           # blockfrost
-pyth.policyId       = <hex>
-pyth.key            = <feed-id>
-wallet.keyEnv       = PYTHACOIN_BOT_KEY
-liquidation.minLtv  = 9000            # bps
-liquidation.dryRun  = true | false
-```
+| Variable                          | Required | Default                                | Notes                                       |
+| --------------------------------- | -------- | -------------------------------------- | ------------------------------------------- |
+| `BLOCKFROST_API_KEY`              | yes      | —                                      | Used by `AppCtx.provider` (Blockfrost backup) |
+| `PYTH_POLICY_ID`                  | yes      | —                                      | Pyth oracle deployment policy hex           |
+| `PYTH_KEY`                        | yes      | —                                      | Pyth Lazer bearer token                     |
+| `PYTHACOIN_BOT_ADDR`              | yes      | —                                      | Bot wallet bech32                           |
+| `PYTHACOIN_BOT_KEY`               | yes      | —                                      | Ed25519 signing key (64 hex chars)          |
+| `PYTHACOIN_BOT_VKEY`              | yes      | —                                      | Ed25519 verification key (64 hex chars)     |
+| `PYTHACOIN_NETWORK`               | no       | `preprod`                              | `preprod` \| `mainnet`                      |
+| `PYTHACOIN_RELAY_HOST`            | no       | `preprod-node.play.dev.cardano.org`    | N2N relay                                   |
+| `PYTHACOIN_RELAY_PORT`            | no       | `3001`                                 | N2N port                                    |
+| `PYTHACOIN_APP_ID`                | no       | `io.lantr.pythacoin.bot`               | Engine persistence appId                    |
+| `PYTHACOIN_MIN_LTV_BPS`           | no       | `9000`                                 | LTV trigger in bps                          |
+| `PYTHACOIN_MIN_PROFIT_LOVELACE`   | no       | `2000000`                              | Min collateral floor (≈ tx_fee + minUtxo)   |
+| `PYTHACOIN_DRY_RUN`               | no       | `false`                                | Force dry-run (also via `dry-run` subcommand) |
+
+CLI: `pythacoin-bot {dry-run|start}`. The `dry-run` subcommand is OR'd with the env
+flag — either is enough to suppress submission.
 
 ## Testing
 

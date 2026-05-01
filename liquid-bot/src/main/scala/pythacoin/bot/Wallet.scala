@@ -23,11 +23,26 @@ final class Wallet(
 
 object Wallet {
 
+    /** Ed25519 keys are exactly 32 bytes. Validate at the env-var boundary so a
+      * typo or truncated paste fails fast at startup instead of producing
+      * confusing signing errors mid-flight.
+      */
+    private val Ed25519KeyHexLen = 64
+
     def fromConfig(cfg: BotConfig): Wallet = {
-        val priv = ByteString.fromHex(cfg.signingKeyHex)
-        val pub = ByteString.fromHex(cfg.verificationKeyHex)
+        val priv = decodeKey("PYTHACOIN_BOT_KEY", cfg.signingKeyHex)
+        val pub = decodeKey("PYTHACOIN_BOT_VKEY", cfg.verificationKeyHex)
         val signer = TransactionSigner(Set(priv -> pub))
         val address = Address.fromBech32(cfg.walletAddrBech32)
         new Wallet(address, signer)
+    }
+
+    private def decodeKey(name: String, hex: String): ByteString = {
+        val trimmed = hex.trim
+        if trimmed.length != Ed25519KeyHexLen then
+            sys.error(
+              s"$name must be 32 bytes (64 hex chars), got ${trimmed.length} chars"
+            )
+        ByteString.fromHex(trimmed)
     }
 }

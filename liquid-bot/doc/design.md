@@ -277,8 +277,6 @@ flag — either is enough to suppress submission.
 
 ## Deferred / out of scope
 
-- **Price-driven trigger** (periodic ticker or Pyth WS subscription — see
-  *Price source* above). Closes the bot's "blind between chain events" gap.
 - Batch liquidations (validator-ready, requires multi-CDP planner & coin selection).
 - Self-minting PUSD reserves (bot opens its own conservatively-collateralised CDP).
 - Priority-fee competition with other liquidators.

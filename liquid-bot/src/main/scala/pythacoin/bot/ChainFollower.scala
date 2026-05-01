@@ -71,17 +71,22 @@ final class ChainFollower(ctx: BotCtx, onChange: CdpEvent => Unit) {
                 onChange(CdpEvent.Removed(utxo.input))
         case UtxoEvent.RolledBack(to) =>
             log.warn(s"Rollback to $to — re-seeding CDP view from provider snapshot")
-            reseed()
-            onChange(CdpEvent.Reseeded(cdpView.readOnlySnapshot().values))
+            if reseed() then
+                onChange(CdpEvent.Reseeded(cdpView.readOnlySnapshot().values))
+            // On failed reseed we deliberately do NOT emit Reseeded. The
+            // previous view is now known-inconsistent (it may still contain
+            // CDPs created on the rolled-back fork); evaluating against it
+            // would waste fee budget on submissions the chain will reject.
+            // Skip this evaluation pass; a successful reseed on a later
+            // event will recover.
 
-    /** Drop the local view and re-derive it from a fresh provider query. Called
-      * after every rollback.
-      *
-      * If the snapshot query fails, keep the previous view: a transient
-      * connectivity blip shouldn't wipe state we'd then have to wait for the
-      * next on-chain event to rediscover.
+    /** Drop the local view and re-derive it from a fresh provider query.
+      * Returns `true` on success, `false` if the snapshot query failed (in
+      * which case the previous view is preserved — a transient connectivity
+      * blip shouldn't wipe state we'd then have to wait for the next on-chain
+      * event to rediscover).
       */
-    private def reseed(): Unit = {
+    private def reseed(): Boolean = {
         ctx.streamProvider
             .findUtxos(UtxoQuery(UtxoSource.FromAddress(ctx.scriptAddr))) match
             case Right(fresh: Utxos) =>
@@ -89,7 +94,9 @@ final class ChainFollower(ctx: BotCtx, onChange: CdpEvent => Unit) {
                 for (input, output) <- fresh
                     info <- ctx.appCtx.cdpQueries.parseCdpInfo(output)
                 do cdpView.put(input, (Utxo(input, output), info))
+                true
             case Left(err) =>
-                log.error(s"Failed to re-seed CDP view (keeping previous view): $err")
+                log.error(s"Failed to re-seed CDP view (keeping previous view, skipping evaluation pass): $err")
+                false
     }
 }

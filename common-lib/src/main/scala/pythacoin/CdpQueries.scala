@@ -45,27 +45,27 @@ class CdpQueries(ctx: AppCtx) {
     }
 
     /** Parse `CdpInfo` from a transaction output, if it's a valid CDP — i.e. it
-      * carries an inline datum and exactly one non-PUSD token under our policy
-      * (the CDP NFT). Public so the bot can reuse the same predicate without
-      * duplicating it.
+      * carries an inline datum and exactly one non-PUSD token of quantity 1
+      * under our policy (the CDP NFT). Public so the bot can reuse the same
+      * predicate without duplicating it.
       */
     def parseCdpInfo(output: TransactionOutput): Option[CdpInfo] = {
         val assets = output.value.assets.assets.getOrElse(policyId, Map.empty)
         val nftEntries = assets.filter { case (name, _) => name != Assets.Pusd }
 
-        if nftEntries.size != 1 then None
-        else
-            val (nftName, _) = nftEntries.head
-            output.inlineDatum.map { data =>
-                val datum = data.to[CdpDatum]
-                CdpInfo(
-                  nftName = nftName.bytes.toHex,
-                  owner = datum.owner.hash.toHex,
-                  collateralLovelace = output.value.coin.value,
-                  debtPusd = datum.debt.toLong,
-                  ltv = 0.0 // computed by frontend with current price
-                )
-            }
+        nftEntries.toList match
+            case (nftName, qty) :: Nil if qty == 1L =>
+                output.inlineDatum.map { data =>
+                    val datum = data.to[CdpDatum]
+                    CdpInfo(
+                      nftName = nftName.bytes.toHex,
+                      owner = datum.owner.hash.toHex,
+                      collateralLovelace = output.value.coin.value,
+                      debtPusd = datum.debt.toLong,
+                      ltv = 0.0 // computed by frontend with current price
+                    )
+                }
+            case _ => None
     }
 }
 

@@ -105,8 +105,13 @@ object BotApp extends OxApp {
         now: Instant
     ): Unit = {
         try
+            // Greedy-pick only the PUSD UTxOs we actually need to cover this
+            // CDP's debt — passing the whole wallet bloats the tx on a
+            // fragmented wallet.
+            val selectedPusd =
+                PusdSelection.greedy(pusdUtxos, ctx.policyId, info.debtPusd)
             val builder =
-                ctx.appCtx.cdpTransactions.liquidateCdp(cdpUtxo, ctx.wallet.address, pusdUtxos, now)
+                ctx.appCtx.cdpTransactions.liquidateCdp(cdpUtxo, ctx.wallet.address, selectedPusd, now)
             // `complete` needs `BlockchainReader[Future]`; the Ox stream provider
             // is direct-style so we route the read path through `appCtx.provider`
             // (Blockfrost). Submission still goes through `streamProvider.submit`.

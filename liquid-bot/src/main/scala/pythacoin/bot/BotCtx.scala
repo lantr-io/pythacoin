@@ -34,25 +34,28 @@ final class BotCtx(
     /** Multi-line operator-facing summary of every knob in effect. Use at
       * startup to make a misconfiguration obvious before the bot does any work.
       */
-    def show: String = {
-        def addr(a: Address): String = a.encode.getOrElse(a.toHex)
+    def show: String =
         s"""Pythacoin bot context:
            |  network            = ${cfg.network}
            |  relay              = ${cfg.relayHost}:${cfg.relayPort} (magic ${cfg.networkMagic})
            |  appId              = ${cfg.appId}
-           |  cdp script address = ${addr(scriptAddr)}
+           |  cdp script address = ${BotCtx.renderAddress(scriptAddr)}
            |  cdp policy id      = ${policyId.toHex}
-           |  pyth policy id     = ${cfg.pythPolicyIdHex}
-           |  wallet             = ${addr(wallet.address)}
+           |  pyth policy id     = ${appCtx.pythPolicyId.toHex}
+           |  wallet             = ${BotCtx.renderAddress(wallet.address)}
            |  minLtvBps          = ${cfg.minLtvBps}
            |  minProfitLovelace  = ${cfg.minProfitLovelace}
            |  dryRun             = ${cfg.dryRun}""".stripMargin
-    }
 
     override def close(): Unit = streamProvider.close()
 }
 
 object BotCtx {
+
+    /** Bech32 if the address has a hrp, otherwise hex. Shared by the startup
+      * banner and the chain-follower subscription log.
+      */
+    def renderAddress(a: Address): String = a.encode.getOrElse(a.toHex)
 
     def apply(cfg: BotConfig): BotCtx = {
         val appCtx = AppCtx(cfg.network, cfg.blockfrostApiKey, cfg.pythPolicyIdHex, cfg.pythKey)

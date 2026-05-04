@@ -26,7 +26,8 @@ final class BotCtx(
     val cfg: BotConfig,
     val appCtx: AppCtx,
     val streamProvider: OxBlockchainStreamProvider,
-    val wallet: Wallet
+    val wallet: Wallet,
+    val priceCache: PriceCache
 ) extends AutoCloseable {
     def scriptAddr: Address = appCtx.scriptAddr
     def policyId: ScriptHash = appCtx.policyId
@@ -45,6 +46,9 @@ final class BotCtx(
            |  wallet             = ${BotCtx.renderAddress(wallet.address)}
            |  minLtvBps          = ${cfg.minLtvBps}
            |  minProfitLovelace  = ${cfg.minProfitLovelace}
+           |  pyth ws url        = ${cfg.pythWsUrl}
+           |  pyth channel       = ${cfg.pythChannel.wireName}
+           |  price max age      = ${cfg.priceMaxAgeSeconds} s
            |  dryRun             = ${cfg.dryRun}""".stripMargin
 
     override def close(): Unit = streamProvider.close()
@@ -69,6 +73,6 @@ object BotCtx {
           backup = BackupSource.Custom(appCtx.provider)
         )
         val wallet = Wallet.fromConfig(cfg)
-        new BotCtx(cfg, appCtx, provider, wallet)
+        new BotCtx(cfg, appCtx, provider, wallet, new PriceCache)
     }
 }

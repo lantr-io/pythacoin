@@ -47,6 +47,14 @@ final class ChainFollower(ctx: BotCtx, onChange: CdpEvent => Unit) {
 
     private val cdpView = TrieMap.empty[TransactionInput, (Utxo, CdpInfo)]
 
+    /** Read-only snapshot of the live CDP view. Used by the WS-driven
+      * price-trigger pass — it needs the same set of CDPs the chain follower
+      * is tracking, without re-querying the script address on every push.
+      * `TrieMap.readOnlySnapshot()` is O(1) and safe to call concurrently
+      * with `handleEvent`.
+      */
+    def snapshot(): Iterable[(Utxo, CdpInfo)] = cdpView.readOnlySnapshot().values
+
     /** Subscribe to UTxO events at the CDP script address and run the callback
       * loop until the flow terminates. Blocks the calling (virtual) thread.
       */
@@ -72,7 +80,7 @@ final class ChainFollower(ctx: BotCtx, onChange: CdpEvent => Unit) {
         case UtxoEvent.RolledBack(to) =>
             log.warn(s"Rollback to $to — re-seeding CDP view from provider snapshot")
             if reseed() then
-                onChange(CdpEvent.Reseeded(cdpView.readOnlySnapshot().values))
+                onChange(CdpEvent.Reseeded(snapshot()))
             // On failed reseed we deliberately do NOT emit Reseeded. The
             // previous view is now known-inconsistent (it may still contain
             // CDPs created on the rolled-back fork); evaluating against it

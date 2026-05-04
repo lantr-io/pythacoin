@@ -8,7 +8,6 @@ import scalus.utils.Hex.toHex
 import scalus.utils.await
 import sttp.client4.*
 
-import java.util.Base64
 import scala.concurrent.ExecutionContext.Implicits.global
 import scala.concurrent.Future
 import scala.concurrent.duration.*
@@ -50,12 +49,8 @@ class PythClient(
 
         response.body match
             case Right(body) =>
-                val encoding = extractSolanaEncoding(body)
-                val data = extractSolanaData(body)
-//                Log.info(s"Pyth Lazer response encoding=$encoding, data length=${data.length}")
-                encoding match
-                    case "base64" => ByteString.fromArray(Base64.getDecoder.decode(data))
-                    case _        => ByteString.fromHex(data)
+                PythLazerEnvelope.decode(body)
+                    .getOrElse(throw RuntimeException(s"No solana payload in Pyth Lazer response: $body"))
             case Left(error) =>
                 Log.error(s"Pyth Lazer API error: $error")
                 throw RuntimeException(s"Pyth Lazer API error: $error")
@@ -188,25 +183,4 @@ class PythClient(
     /** ADA/USD price as `BigDecimal` (e.g. 0.7523 for $0.7523/ADA), for display. */
     def parsePrice(updateBytes: ByteString): BigDecimal =
         BigDecimal(parsePriceRaw(updateBytes)) / BigDecimal(100_000_000L)
-
-    /** Extract the solana.encoding field from JSON response. */
-    private def extractSolanaEncoding(json: String): String = {
-        val key = "\"encoding\":\""
-        val idx = json.lastIndexOf(key)
-        if idx < 0 then return "hex" // default
-        val start = idx + key.length
-        val end = json.indexOf('"', start)
-        if end < 0 then "hex" else json.substring(start, end)
-    }
-
-    /** Extract the solana.data field from JSON response. */
-    private def extractSolanaData(json: String): String = {
-        val dataKey = "\"data\":\""
-        val idx = json.lastIndexOf(dataKey)
-        if idx < 0 then throw RuntimeException(s"Cannot find solana.data in response: $json")
-        val start = idx + dataKey.length
-        val end = json.indexOf('"', start)
-        if end < 0 then throw RuntimeException(s"Malformed solana.data in response: $json")
-        json.substring(start, end)
-    }
 }

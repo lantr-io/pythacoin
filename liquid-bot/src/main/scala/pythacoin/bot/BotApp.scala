@@ -2,16 +2,11 @@ package pythacoin.bot
 
 import com.monovore.decline.{Command, Opts}
 import org.slf4j.LoggerFactory
-import ox.{ExitCode, Ox, OxApp, useCloseableInScope}
-import pythacoin.{Assets, CdpInfo}
-import scalus.cardano.ledger.{Utxo, Utxos}
-import scalus.cardano.node.{NodeSubmitError, UtxoQuery, UtxoSource}
-import scalus.utils.Hex.toHex
-import scalus.utils.await
+import ox.{ExitCode, Ox, OxApp, fork, useCloseableInScope}
+import pythacoin.CdpInfo
+import scalus.cardano.ledger.Utxo
 
 import java.time.Instant
-import scala.concurrent.ExecutionContext.Implicits.global
-import scala.concurrent.duration.*
 
 /** Entry point for the liquidation bot. Two subcommands:
   *   - `dry-run`  — connect, follow the chain, log candidate liquidations, never submit.
@@ -48,105 +43,63 @@ object BotApp extends OxApp {
 
     /** Bot lifecycle given an already-built config. Public so tests can drive
       * it with an in-code `BotConfig` instead of going through env vars.
+      *
+      * Three concurrent triggers feed `Evaluator.tryEvaluate`:
+      *   - chain events (CDP set changed),
+      *   - WS price pushes (price moved; same CDP set may now be liquidatable),
+      *   - the priceLoop poll that bridges the WS write-side to the read-side
+      *     and doubles as the retry mechanism for Reseeded events that get
+      *     dropped by the busy gate.
       */
     def runWithConfig(cfg: BotConfig)(using Ox): Unit = {
         val ctx = useCloseableInScope(BotCtx(cfg))
         log.info(s"Starting\n${ctx.show}")
-        new ChainFollower(ctx, onCdpChange(ctx)).runForever()
+        val evaluator = new Evaluator(ctx)
+        fork {
+            new PriceStream(cfg, ctx.appCtx.pythClient, ctx.priceCache).run()
+        }
+        val follower = new ChainFollower(ctx, onCdpChange(evaluator))
+        fork {
+            priceLoop(ctx, evaluator, () => follower.snapshot())
+        }
+        follower.runForever()
     }
 
     /** Per-event dispatch: scope the work to what actually changed.
       *   - `Added`    → re-price just that one CDP,
       *   - `Removed`  → no work (the CDP is gone),
-      *   - `Reseeded` → rollback path, re-price the whole view.
+      *   - `Reseeded` → rollback path; mark the view dirty so a dropped pass
+      *                  is retried by the priceLoop tick.
       */
-    private def onCdpChange(ctx: BotCtx)(event: CdpEvent): Unit = event match
-        case CdpEvent.Added(utxo, info) => evaluate(ctx, Iterable((utxo, info)))
+    private def onCdpChange(evaluator: Evaluator)(event: CdpEvent): Unit = event match
+        case CdpEvent.Added(utxo, info) => evaluator.tryEvaluate(Iterable((utxo, info)))
         case CdpEvent.Removed(_)        => ()
-        case CdpEvent.Reseeded(all)     => evaluate(ctx, all)
+        case CdpEvent.Reseeded(all)     =>
+            evaluator.markViewDirty()
+            if evaluator.tryEvaluate(all) then evaluator.clearViewDirty()
 
-    /** Run the decider over the given CDPs against a fresh Pyth price and the
-      * bot's current PUSD balance. One Pyth fetch + one wallet UTxO query per
-      * call, regardless of how many CDPs are evaluated.
+    /** Poll the WS-backed cache and re-evaluate the live CDP view whenever
+      * a fresh push arrives or `viewDirty` is set. The 50 ms tick is tighter
+      * than the WS channel rate (200 ms) so we don't add latency on top of
+      * the push; the skip-if-busy gate inside `tryEvaluate` prevents
+      * back-pressure from in-flight passes.
       */
-    private def evaluate(ctx: BotCtx, cdps: Iterable[(Utxo, CdpInfo)]): Unit = {
-        if cdps.isEmpty then return
-        val now = Instant.now()
-        val priceRaw =
-            try BigInt(ctx.appCtx.pythClient.parsePriceRaw(ctx.appCtx.pythClient.fetchPriceUpdate()))
-            catch case e: Exception =>
-                log.warn(s"Pyth fetch failed; skipping decision pass: ${e.getMessage}")
-                return
-
-        val pusdUtxos: Utxos = walletPusdUtxos(ctx)
-        val availablePusd: Long = pusdUtxos.values.map(_.value.asset(ctx.policyId, Assets.Pusd)).sum
-
-        cdps.foreach { case (cdpUtxo, info) =>
-            LiquidationDecider.decide(
-              info,
-              priceRaw,
-              ctx.cfg.minLtvBps,
-              availablePusd,
-              ctx.cfg.minProfitLovelace
-            ) match
-                case LiquidationDecider.Decision.Skip(reason) =>
-                    log.debug(s"Skip ${info.nftName}: $reason")
-                case LiquidationDecider.Decision.Liquidate(ltvBps) =>
-                    log.info(s"Liquidate candidate ${info.nftName} at LTV $ltvBps bps")
-                    if !ctx.cfg.dryRun then submitLiquidation(ctx, cdpUtxo, info, pusdUtxos, now)
-        }
-    }
-
-    private def submitLiquidation(
+    private def priceLoop(
         ctx: BotCtx,
-        cdpUtxo: Utxo,
-        info: CdpInfo,
-        pusdUtxos: Utxos,
-        now: Instant
+        evaluator: Evaluator,
+        snapshot: () => Iterable[(Utxo, CdpInfo)]
     ): Unit = {
-        try
-            // Greedy-pick only the PUSD UTxOs we actually need to cover this
-            // CDP's debt — passing the whole wallet bloats the tx on a
-            // fragmented wallet.
-            val selectedPusd =
-                PusdSelection.greedy(pusdUtxos, ctx.policyId, info.debtPusd)
-            val builder =
-                ctx.appCtx.cdpTransactions.liquidateCdp(cdpUtxo, ctx.wallet.address, selectedPusd, now)
-            // `complete` needs `BlockchainReader[Future]`; the Ox stream provider
-            // is direct-style so we route the read path through `appCtx.provider`
-            // (Blockfrost). Submission still goes through `streamProvider.submit`.
-            val completed = builder.complete(ctx.appCtx.provider, ctx.wallet.address).await(30.seconds)
-            val signed = ctx.wallet.sign(completed.transaction)
-            ctx.streamProvider.submit(signed) match
-                case Right(hash) =>
-                    log.info(s"Liquidate submitted: txid=${hash.toHex} nft=${info.nftName}")
-                case Left(_: NodeSubmitError.UtxoNotAvailable) =>
-                    // Could be the CDP itself (a competing liquidator won the race)
-                    // or one of our own PUSD UTxOs (spent by a prior liquidation
-                    // already in flight). Both are benign retry-on-next-event cases.
-                    log.info(s"Liquidate ${info.nftName}: a required input UTxO is no longer available")
-                case Left(other) =>
-                    log.warn(s"Liquidate submit rejected for ${info.nftName}: ${other.message}")
-        catch case e: Exception =>
-            log.error(s"Liquidate failed for ${info.nftName}: ${e.getMessage}", e)
-    }
-
-    /** UTxOs at the bot wallet that hold PUSD. Used as the spend set for
-      * `liquidateCdp` (PUSD lives at the wallet, not the script address, so the
-      * tx-builder can't auto-select).
-      */
-    private def walletPusdUtxos(ctx: BotCtx): Utxos = {
-        ctx.streamProvider
-            .findUtxos(UtxoQuery(UtxoSource.FromAddress(ctx.wallet.address))) match
-            case Right(found) =>
-                found.filter { case (_, output) =>
-                    output.value.asset(ctx.policyId, Assets.Pusd) > 0
-                }
-            case Left(err) =>
-                // Don't conflate "we couldn't ask" with "no PUSD" — operators
-                // reading the log would otherwise top up for no reason. Empty
-                // map skips submission this pass, and the next event retries.
-                log.warn(s"Wallet UTxO query failed (treating as 0 PUSD for this pass): $err")
-                Map.empty
+        var lastFetchedAt: Option[Instant] = None
+        while !Thread.currentThread.isInterrupted do
+            ctx.priceCache.current(Instant.now(), ctx.cfg.priceMaxAgeSeconds).foreach { c =>
+                val newPrice = !lastFetchedAt.contains(c.fetchedAt)
+                val newView  = evaluator.isViewDirty
+                if (newPrice || newView) && evaluator.tryEvaluate(snapshot()) then
+                    lastFetchedAt = Some(c.fetchedAt)
+                    if newView then evaluator.clearViewDirty()
+            }
+            try Thread.sleep(50L)
+            catch case _: InterruptedException =>
+                Thread.currentThread.interrupt(); return
     }
 }

@@ -83,25 +83,30 @@ Two transports are available from Pyth today:
 
 | Transport     | Endpoint                                                  | Used today? |
 | ------------- | --------------------------------------------------------- | ----------- |
-| **REST**      | `POST https://pyth-lazer.dourolabs.app/v1/latest_price`   | ✅ via `PythClient.fetchPriceUpdate()` |
-| **WebSocket** | `wss://pyth-lazer-0.dourolabs.app/v1/stream` (+ mirrors)  | ❌ not wired |
+| **REST**      | `POST https://pyth-lazer.dourolabs.app/v1/latest_price`   | ✅ — `CdpTransactions.fetchPythInfo` REST-fallback (cache miss) and the HTTP server's open/borrow/repay endpoints. |
+| **WebSocket** | `wss://pyth-lazer-0.dourolabs.app/v1/stream` (+ mirrors)  | ✅ — `PriceStream` keeps `priceCache` warm; bot uses cached bytes on every `liquidateCdp` submit. |
 
 Both deliver the same Solana-format signed payload that
 `PythClient.parsePriceRaw` decodes. Auth is a Bearer token (`PYTH_KEY`).
+Only `formats: ["solana"]` is requested — the deployed Pyth Cardano
+withdraw script is hardcoded to the Solana envelope and Ed25519
+signature, so the other Lazer formats (`evm`, `leEcdsa`, `leUnsigned`)
+would fail phase-2 validation.
 
-### Current cadence: chain-event-driven only
+### Cadence: chain events + WS price pushes
 
-`evaluate(...)` is the only call site of `pythClient.fetchPriceUpdate()`.
-`evaluate` runs only on `CdpEvent.Added` and `CdpEvent.Reseeded`. Between
-chain events the bot is **completely blind to price moves**.
+`evaluate(...)` runs on **either** trigger:
 
-### Known gap: price-driven re-evaluation
+- `ChainFollower` callbacks (`CdpEvent.Added` / `Reseeded`) — view changed.
+- `PriceStream` push observed via `priceLoop` polling `priceCache.fetchedAt` — price moved.
 
-A CDP at LTV ≈ 89% with no on-chain churn but a falling price stays
-unliquidated until something else triggers a chain event. The protocol bears
-the safety tax of this gap until a separate price-driven trigger lands.
+Both funnel through `tryEvaluate` (skip-if-busy guard) so a slow on-chain
+submission can't backlog the 5×/sec push stream. Cache freshness is
+wall-clock based: an entry older than `priceMaxAgeSeconds` reads as `None`
+and `evaluate` skips the pass instead of acting on a price the validator
+might reject.
 
-### Planned trigger: Pyth Lazer WebSocket subscription
+### Implemented trigger: Pyth Lazer WebSocket subscription
 
 A persistent WebSocket connection to `wss://pyth-lazer-0.dourolabs.app/v1/stream`
 pushes signed updates at the channel rate (`fixed_rate@200ms` ⇒ 5×/sec). The bot
@@ -120,21 +125,29 @@ is permissionless precisely because the protocol benefits from fast keepers.
 
 ```
   ┌─────────────────────────────┐    ┌──────────────────────────┐
-  │  PriceStream (ox fork)      │───▶│  lastPrice: AtomicRef    │
-  │  - WS connect+resubscribe   │    │    Option[CachedPrice]   │
-  │  - on push: parse+update    │    │  CachedPrice =           │
-  │  - on disconnect: backoff   │    │    (bytes, raw, fetchedAt)│
-  │  - drop cache if stale      │    └────────────┬─────────────┘
-  └─────────────────────────────┘                 │
-                │ fires on each push              │ read by
-                ▼                                 ▼
+  │  PriceStream (ox fork)      │───▶│  PriceCache              │
+  │  - WS connect + subscribe   │    │   AtomicReference        │
+  │  - on push: parse + cache   │    │     Option[Cached(bytes, │
+  │  - on close: backoff 1s→30s │    │       raw, fetchedAt)]   │
+  └─────────────────────────────┘    └────────────┬─────────────┘
+                                                  │ read by
+                                                  ▼
   ┌─────────────────────────────┐    ┌──────────────────────────┐
-  │  BotApp.tryEvaluate         │    │  CdpTransactions         │
-  │  (skip-if-busy guard)       │    │  .liquidateCdp(bytes,..) │
-  └────────────┬────────────────┘    └──────────────────────────┘
-               │
-               ▼
-       evaluate(snapshot) — same dispatch path
+  │  ChainFollower              │    │  priceLoop (ox fork)     │
+  │  onChange(CdpEvent)         │    │  - poll fetchedAt        │
+  │   ↓ Added/Reseeded          │    │  - on new push OR        │
+  │  tryEvaluate(snapshot)      │    │    viewDirty=true:       │
+  │   (sets viewDirty if        │    │    tryEvaluate(snapshot) │
+  │    Reseeded was dropped)    │    │  - clear viewDirty on    │
+  └────────────┬────────────────┘    │    successful pass       │
+               │                     └────────────┬─────────────┘
+               │              ┌───────────────────┘
+               ▼              ▼
+        ┌──────────────────────────────────┐    ┌──────────────────────────┐
+        │  tryEvaluate                     │───▶│  CdpTransactions         │
+        │  (AtomicBoolean evalBusy:        │    │  .liquidateCdp(...,      │
+        │   drop, don't queue)             │    │   cachedPriceBytes)      │
+        └──────────────────────────────────┘    └──────────────────────────┘
 ```
 
 | Concern               | Decision                                                                                       |
@@ -148,6 +161,7 @@ is permissionless precisely because the protocol benefits from fast keepers.
 | **Reconnect**         | On WS close: exponential backoff (1 s, 2 s, 4 s, … capped at 30 s); cache continues to age out independently, so during the gap the bot stops evaluating cleanly. |
 | **Stream parsing**    | Pyth Lazer's WS messages wrap the same Solana payload bytes that REST returns; `PythClient.parsePriceRaw` is reused unchanged. The WS-specific layer is just envelope/handshake handling. |
 | **Mutual exclusion**  | `AtomicBoolean evalBusy`: chain-event handler and WS-push handler both go through `tryEvaluate`, which skips (not queues) if the previous pass is still running. |
+| **Dropped-Reseeded recovery** | `Reseeded` arriving while `evalBusy=true` would otherwise lose its trigger. `AtomicBoolean viewDirty` is set in the `Reseeded` handler and cleared only on a successful `tryEvaluate`; `priceLoop` re-fires `tryEvaluate(snapshot)` while `viewDirty=true` even without a new WS push. Worst-case post-rollback latency: one priceLoop tick (~50 ms) instead of "next WS push". |
 | **Dry-run**           | WS still runs in dry-run; `evaluate` respects `cfg.dryRun` and skips submission only.          |
 | **Shutdown**          | WS fork lives in `OxApp`'s supervised scope — SIGTERM cancels both the chain follower and the WS subscription cleanly.|
 
@@ -159,29 +173,34 @@ is permissionless precisely because the protocol benefits from fast keepers.
 | `PYTHACOIN_PYTH_CHANNEL`              | no       | `fixed_rate@200ms`                                 | `fixed_rate@200ms` \| `fixed_rate@50ms` \| `real_time` per Pyth.   |
 | `PYTHACOIN_PRICE_MAX_AGE_SECONDS`     | no       | `60`                                               | Drop cached price after this; `evaluate` skips while cache empty.  |
 
-#### Component additions
+#### Component additions (as shipped)
 
-A new `PriceStream` class in `pythacoin.bot` owns the WS connection + cache.
-`BotCtx` exposes a `priceCache: PriceCache` accessor (the read-only handle).
-`BotApp.runWithConfig` forks `PriceStream.run()` alongside `ChainFollower.runForever()`.
+| Component        | Role                                                                                                                                      |
+| ---------------- | ----------------------------------------------------------------------------------------------------------------------------------------- |
+| `PriceCache`     | `AtomicReference[Option[Cached]]`. Read-side wall-clock staleness check (`now - fetchedAt <= maxAgeSeconds`); no background reaper.       |
+| `PriceStream`    | `java.net.http.WebSocket` (no extra deps). Connect → subscribe → on each `streamUpdated` push: extract `solana.data`, base64-decode, `parsePriceRaw`, `cache.set`. Backoff loop on close/error. |
+| `BotCtx.priceCache` | Single instance owned by `BotCtx`; `PriceStream` writes, `BotApp.evaluate` and `priceLoop` read.                                       |
+| `ChainFollower.snapshot()` | O(1) `TrieMap.readOnlySnapshot().values` exposed for `priceLoop` so the WS-driven pass evaluates the same view the follower is tracking — without re-querying the script address per push. |
+| `BotApp.priceLoop` | 50 ms polling fork that re-fires `tryEvaluate(follower.snapshot())` whenever `priceCache.fetchedAt` advances OR `viewDirty` is set.     |
+| `BotApp.tryEvaluate` | Skip-if-busy gate via `AtomicBoolean evalBusy`; returns `Boolean` so callers can leave a "retry next tick" flag set on a dropped pass. |
 
 #### Failure modes (additions to the table further down)
 
 | Mode                                | Bot behaviour                                                       |
 | ----------------------------------- | ------------------------------------------------------------------- |
-| Pyth Lazer WS disconnect            | Backoff-reconnect; cache ages out → `evaluate` skips passes.        |
+| Pyth Lazer WS disconnect            | Backoff-reconnect (1 s → 30 s); cache ages out → `evaluate` skips passes. |
 | Pyth Lazer WS message decode error  | Log warn, drop the message, keep the connection.                    |
 | Cache stale (no push for `maxAge`)  | `evaluate` returns early with a warn; submission gets the same gate.|
+| Reseeded dropped while evalBusy     | `viewDirty` set; `priceLoop` retries on its next tick (~50 ms).     |
 
-#### Open question
+#### Open question — settled
 
-Should the bot also fetch a fresh price via REST at submit time as a
-"belt-and-braces" check, rather than trusting the cached WS payload? Pro:
-guarantees the on-chain validator sees the freshest possible price. Con:
-defeats the cache's whole point and re-introduces an HTTP call per
-submission. **Default**: trust the cache (stale-cache gate already protects
-against expired prices); make it env-toggleable
-(`PYTHACOIN_PRICE_REFETCH_ON_SUBMIT=false`) for operators who want it.
+Whether to refetch a fresh price via REST at submit time was deferred as
+"open question". **Settled: trust the cache.** The stale-cache gate
+(`priceMaxAgeSeconds`) already prevents the bot from acting on a price
+the validator would reject. Adding a per-submit REST round-trip would
+defeat the cache's purpose and add ~200 ms of latency to the liquidation
+race. No `PYTHACOIN_PRICE_REFETCH_ON_SUBMIT` knob is exposed.
 
 ## Liquidation policy (v1)
 
@@ -258,17 +277,22 @@ needs to reconstruct historical prices. Concretely:
 | `PYTHACOIN_MIN_LTV_BPS`           | no       | `9000`                                 | LTV trigger in bps                          |
 | `PYTHACOIN_MIN_PROFIT_LOVELACE`   | no       | `2000000`                              | Min collateral floor (≈ tx_fee + minUtxo)   |
 | `PYTHACOIN_DRY_RUN`               | no       | `false`                                | Force dry-run (also via `dry-run` subcommand) |
+| `PYTHACOIN_PYTH_WS_URL`           | no       | `wss://pyth-lazer-0.dourolabs.app/v1/stream` | Pyth Lazer WS endpoint (override for mirrors) |
+| `PYTHACOIN_PYTH_CHANNEL`          | no       | `fixed_rate@200ms`                     | `fixed_rate@200ms` \| `fixed_rate@50ms` \| `real_time` |
+| `PYTHACOIN_PRICE_MAX_AGE_SECONDS` | no       | `60`                                   | Drop cached price after this; `evaluate` skips while cache empty |
 
 CLI: `pythacoin-bot {dry-run|start}`. The `dry-run` subcommand is OR'd with the env
 flag — either is enough to suppress submission.
 
 ## Testing
 
-- **Unit (`liquidBot/test`, 13 tests):**
+- **Unit (`liquidBot/test`, 18 tests):**
   - `LiquidationDecider` (6) — LTV around 89/90/91, fee-edge profitability,
     insufficient-PUSD, zero-collateral / zero-debt / zero-price guards.
   - `PusdSelection` (7) — single-pick, multi-pick, sort independence, exact
     match, insufficient-total fallback, tie-determinism.
+  - `PriceCache` (5) — empty-before-set, fresh window, boundary-inclusive,
+    aged-out, latest-write-wins.
 - **Integration (planned):** extend `integration/` with a Yaci-DevKit scenario
   — open an under-collateralised CDP, drop the simulated ADA/USD price, assert
   the bot submits a `Liquidate` tx and the chain confirms it.

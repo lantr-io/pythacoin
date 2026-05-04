@@ -44,9 +44,10 @@ class CdpTransactions(ctx: AppCtx, pythClient: PythClient)(using CardanoInfo) {
         nftName: AssetName,
         ownerPkh: PubKeyHash,
         ownerAddr: Address,
-        now: Instant
+        now: Instant,
+        cachedPriceBytes: Option[ByteString] = None
     ): TxBuilder = {
-        val (pythState, pythWithdrawAddr, updateBytes, pythWitness) = fetchPythInfo(now)
+        val (pythState, pythWithdrawAddr, updateBytes, pythWitness) = fetchPythInfo(now, cachedPriceBytes)
         val datum = CdpDatum(ownerPkh, BigInt(debtPusd))
 
         txBuilder
@@ -71,9 +72,10 @@ class CdpTransactions(ctx: AppCtx, pythClient: PythClient)(using CardanoInfo) {
         cdpUtxo: Utxo,
         additionalPusd: Long,
         ownerAddr: Address,
-        now: Instant
+        now: Instant,
+        cachedPriceBytes: Option[ByteString] = None
     ): TxBuilder = {
-        val (pythState, pythWithdrawAddr, updateBytes, pythWitness) = fetchPythInfo(now)
+        val (pythState, pythWithdrawAddr, updateBytes, pythWitness) = fetchPythInfo(now, cachedPriceBytes)
         val oldDatum = parseCdpDatum(cdpUtxo)
         val nftName = findNftName(cdpUtxo)
         val newDatum = CdpDatum(oldDatum.owner, oldDatum.debt + additionalPusd)
@@ -149,9 +151,10 @@ class CdpTransactions(ctx: AppCtx, pythClient: PythClient)(using CardanoInfo) {
         cdpUtxo: Utxo,
         liquidatorAddr: Address,
         liquidatorPusdUtxos: Utxos,
-        now: Instant
+        now: Instant,
+        cachedPriceBytes: Option[ByteString] = None
     ): TxBuilder = {
-        val (pythState, pythWithdrawAddr, updateBytes, pythWitness) = fetchPythInfo(now)
+        val (pythState, pythWithdrawAddr, updateBytes, pythWitness) = fetchPythInfo(now, cachedPriceBytes)
         val oldDatum = parseCdpDatum(cdpUtxo)
         val nftName = findNftName(cdpUtxo)
         val collateral = cdpUtxo.output.value.coin.value
@@ -181,14 +184,19 @@ class CdpTransactions(ctx: AppCtx, pythClient: PythClient)(using CardanoInfo) {
       * 4. A TwoArgumentPlutusScriptWitness using the reference script (Conway requires
       *    using the reference script, not attaching a copy)
       */
-    private def fetchPythInfo(now: Instant): (Utxo, StakeAddress, ByteString, TwoArgumentPlutusScriptWitness) = {
+    private def fetchPythInfo(
+        now: Instant,
+        cachedPriceBytes: Option[ByteString]
+    ): (Utxo, StakeAddress, ByteString, TwoArgumentPlutusScriptWitness) = {
         Log.info("Fetching Pyth oracle info...")
         val pythState = pythClient.fetchPythState()
         val withdrawHash = pythClient.extractWithdrawScript(pythState)
         val pythWithdrawAddr = StakeAddress(ctx.cardanoInfo.network, StakePayload.Script(withdrawHash))
         Log.info(s"Pyth withdraw address: ${pythWithdrawAddr.toBech32}")
-        val updateBytes = pythClient.fetchPriceUpdate()
-        Log.info(s"Price update bytes: ${updateBytes.size} bytes")
+        // Reuse the bytes the bot just received over WS instead of round-tripping
+        // a second REST call per submit; on cache miss fall back to REST.
+        val updateBytes = cachedPriceBytes.getOrElse(pythClient.fetchPriceUpdate())
+        Log.info(s"Price update bytes: ${updateBytes.size} bytes (source=${if cachedPriceBytes.isDefined then "cache" else "REST"})")
         // Blockfrost doesn't populate scriptRef on UTxOs, so we manually enrich it
         val withdrawScript = pythClient.fetchScript(withdrawHash)
         val enrichedOutput = TransactionOutput.Babbage(

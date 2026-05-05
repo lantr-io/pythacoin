@@ -51,10 +51,16 @@ object BotConfig {
     val MainnetMagic: Long = 764824073L
 
     /** Build a config from the standard env-var surface. Throws on missing required vars. */
-    def fromEnv(): BotConfig = {
+    def fromEnv(): BotConfig = fromMap(sys.env)
+
+    /** Build a config from an arbitrary key/value map. Tests use this to feed
+      * a parsed `.env` file (or any in-memory overrides) without touching the
+      * JVM's real environment.
+      */
+    def fromMap(env: Map[String, String]): BotConfig = {
         def req(name: String): String =
-            sys.env.getOrElse(name, sys.error(s"$name environment variable is not set"))
-        def opt(name: String, default: String): String = sys.env.getOrElse(name, default)
+            env.getOrElse(name, sys.error(s"$name environment variable is not set"))
+        def opt(name: String, default: String): String = env.getOrElse(name, default)
 
         val (network, magic) = opt("PYTHACOIN_NETWORK", "preprod").toLowerCase match
             case "mainnet" => (ScalusNetwork.Mainnet, MainnetMagic)

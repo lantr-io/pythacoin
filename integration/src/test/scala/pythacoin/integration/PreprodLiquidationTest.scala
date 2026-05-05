@@ -50,27 +50,31 @@ class PreprodLiquidationTest extends AnyFunSuite {
     private val runDurationSeconds: Long =
         sys.env.getOrElse("PYTHACOIN_PREPROD_TEST_SECONDS", "90").toLong
 
-    /** Allow `.env`-style file loading the same way `PreprodCdpTest` does, so
-      * operators don't have to export a dozen vars to their shell.
+    /** Parse `.env` into a Map (sys.env wins on conflict) so operators don't
+      * have to export a dozen vars to their shell. Returns `sys.env` unchanged
+      * when no `.env` file is present.
       */
-    private def loadEnvFile(): Unit = {
+    private def loadEnv(): Map[String, String] = {
         val f = new java.io.File(".env")
-        if !f.exists then return
+        if !f.exists then return sys.env
         val src = Source.fromFile(f)
-        try src.getLines().filter(_.contains("=")).foreach { line =>
-            val idx = line.indexOf('=')
-            val k = line.substring(0, idx).trim
-            val v = line.substring(idx + 1).trim
-            if !sys.env.contains(k) then System.setProperty(k, v) // dev-only fallback
-        } finally src.close()
+        try
+            val fromFile = src.getLines().filter(_.contains("=")).map { line =>
+                val idx = line.indexOf('=')
+                line.substring(0, idx).trim -> line.substring(idx + 1).trim
+            }.toMap
+            // Real env overrides .env so an operator can patch a single value
+            // on the command line without editing the file.
+            fromFile ++ sys.env
+        finally src.close()
     }
 
     test("preprod smoke: bot starts, follows chain, receives WS prices (dry-run)", PreprodTag) {
-        loadEnvFile()
+        val env = loadEnv()
 
         // Dry-run is enforced regardless of env so this test never submits a
         // real tx, even if an operator forgets to set PYTHACOIN_DRY_RUN=true.
-        val cfg = BotConfig.fromEnv().copy(dryRun = true)
+        val cfg = BotConfig.fromMap(env).copy(dryRun = true)
         assert(cfg.network == ScalusNetwork.Testnet, "Test requires preprod (PYTHACOIN_NETWORK=preprod)")
 
         log.info(s"Preprod smoke test: running for ${runDurationSeconds}s in dry-run")

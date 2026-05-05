@@ -83,20 +83,30 @@ object BotApp extends OxApp {
       * than the WS channel rate (200 ms) so we don't add latency on top of
       * the push; the skip-if-busy gate inside `tryEvaluate` prevents
       * back-pressure from in-flight passes.
+      *
+      * `snapshot()` returns `None` while the chain follower's view is known
+      * to be inconsistent (a failed rollback reseed). We hold off evaluation
+      * in that window so a stale post-fork view can't drive a fee-burning
+      * submission; the next successful reseed restores it.
       */
     private def priceLoop(
         ctx: BotCtx,
         evaluator: Evaluator,
-        snapshot: () => Iterable[(Utxo, CdpInfo)]
+        snapshot: () => Option[Iterable[(Utxo, CdpInfo)]]
     ): Unit = {
         var lastFetchedAt: Option[Instant] = None
         while !Thread.currentThread.isInterrupted do
             ctx.priceCache.current(Instant.now(), ctx.cfg.priceMaxAgeSeconds).foreach { c =>
-                val newPrice = !lastFetchedAt.contains(c.fetchedAt)
-                val newView  = evaluator.isViewDirty
-                if (newPrice || newView) && evaluator.tryEvaluate(snapshot()) then
-                    lastFetchedAt = Some(c.fetchedAt)
-                    if newView then evaluator.clearViewDirty()
+                snapshot() match
+                    case None =>
+                        // Inconsistent view; defer evaluation until reseed succeeds.
+                        ()
+                    case Some(view) =>
+                        val newPrice = !lastFetchedAt.contains(c.fetchedAt)
+                        val newView  = evaluator.isViewDirty
+                        if (newPrice || newView) && evaluator.tryEvaluate(view) then
+                            lastFetchedAt = Some(c.fetchedAt)
+                            if newView then evaluator.clearViewDirty()
             }
             try Thread.sleep(50L)
             catch case _: InterruptedException =>

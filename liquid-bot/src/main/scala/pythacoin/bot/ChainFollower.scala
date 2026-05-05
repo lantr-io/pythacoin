@@ -8,6 +8,7 @@ import scalus.cardano.node.stream.*
 import scalus.utils.Hex.toHex
 
 import scala.collection.concurrent.TrieMap
+import java.util.concurrent.atomic.AtomicBoolean
 
 /** Delta delivered to the consumer when the CDP view changes. The bot uses
   * these to scope per-event work to what actually changed:
@@ -47,13 +48,25 @@ final class ChainFollower(ctx: BotCtx, onChange: CdpEvent => Unit) {
 
     private val cdpView = TrieMap.empty[TransactionInput, (Utxo, CdpInfo)]
 
-    /** Read-only snapshot of the live CDP view. Used by the WS-driven
-      * price-trigger pass — it needs the same set of CDPs the chain follower
-      * is tracking, without re-querying the script address on every push.
+    // True iff `cdpView` is consistent with the latest applied chain point.
+    // Flipped to false on a failed rollback reseed; restored to true once a
+    // subsequent reseed succeeds. While false, `snapshot()` returns None so
+    // the WS-driven price loop can't drive evaluations against an
+    // inconsistent view.
+    private val viewValid = new AtomicBoolean(true)
+
+    /** Read-only snapshot of the live CDP view, or `None` when the view is
+      * known to be inconsistent (a rollback whose reseed query failed).
+      *
+      * The WS-driven price-trigger pass uses this so a stale view from an
+      * abandoned fork can't drive a fee-burning submission. A successful
+      * reseed on a later event restores `Some`.
+      *
       * `TrieMap.readOnlySnapshot()` is O(1) and safe to call concurrently
       * with `handleEvent`.
       */
-    def snapshot(): Iterable[(Utxo, CdpInfo)] = cdpView.readOnlySnapshot().values
+    def snapshot(): Option[Iterable[(Utxo, CdpInfo)]] =
+        if viewValid.get() then Some(cdpView.readOnlySnapshot().values) else None
 
     /** Subscribe to UTxO events at the CDP script address and run the callback
       * loop until the flow terminates. Blocks the calling (virtual) thread.
@@ -65,28 +78,40 @@ final class ChainFollower(ctx: BotCtx, onChange: CdpEvent => Unit) {
         flow.runForeach(handleEvent)
     }
 
-    private def handleEvent(event: UtxoEvent): Unit = event match
-        case UtxoEvent.Created(utxo, _, at) =>
-            ctx.appCtx.cdpQueries.parseCdpInfo(utxo.output) match
-                case Some(info) =>
-                    cdpView.put(utxo.input, (utxo, info))
-                    log.info(s"CDP created at $at: ${utxo.input.transactionId.toHex}#${utxo.input.index}")
-                    onChange(CdpEvent.Added(utxo, info))
-                case None => ()
-        case UtxoEvent.Spent(utxo, spentBy, at) =>
-            if cdpView.remove(utxo.input).isDefined then
-                log.info(s"CDP spent at $at by ${spentBy.toHex}: ${utxo.input.transactionId.toHex}#${utxo.input.index}")
-                onChange(CdpEvent.Removed(utxo.input))
-        case UtxoEvent.RolledBack(to) =>
-            log.warn(s"Rollback to $to — re-seeding CDP view from provider snapshot")
-            if reseed() then
-                onChange(CdpEvent.Reseeded(snapshot()))
-            // On failed reseed we deliberately do NOT emit Reseeded. The
-            // previous view is now known-inconsistent (it may still contain
-            // CDPs created on the rolled-back fork); evaluating against it
-            // would waste fee budget on submissions the chain will reject.
-            // Skip this evaluation pass; a successful reseed on a later
-            // event will recover.
+    private def handleEvent(event: UtxoEvent): Unit = {
+        // Opportunistically retry a previously-failed reseed on every
+        // incoming event so a transient `findUtxos` blip self-recovers
+        // without waiting for the next on-chain rollback.
+        if !viewValid.get() then attemptReseed("retry after prior failed reseed")
+
+        event match
+            case UtxoEvent.Created(utxo, _, at) =>
+                ctx.appCtx.cdpQueries.parseCdpInfo(utxo.output) match
+                    case Some(info) =>
+                        cdpView.put(utxo.input, (utxo, info))
+                        log.info(s"CDP created at $at: ${utxo.input.transactionId.toHex}#${utxo.input.index}")
+                        if viewValid.get() then onChange(CdpEvent.Added(utxo, info))
+                    case None => ()
+            case UtxoEvent.Spent(utxo, spentBy, at) =>
+                if cdpView.remove(utxo.input).isDefined then
+                    log.info(s"CDP spent at $at by ${spentBy.toHex}: ${utxo.input.transactionId.toHex}#${utxo.input.index}")
+                    if viewValid.get() then onChange(CdpEvent.Removed(utxo.input))
+            case UtxoEvent.RolledBack(to) =>
+                attemptReseed(s"rollback to $to")
+    }
+
+    /** Attempt to re-seed the view. On success, mark valid and emit Reseeded.
+      * On failure, mark invalid (snapshot will return None until a later
+      * event triggers another retry that succeeds).
+      */
+    private def attemptReseed(reason: String): Unit = {
+        log.warn(s"Re-seeding CDP view: $reason")
+        if reseed() then
+            viewValid.set(true)
+            onChange(CdpEvent.Reseeded(cdpView.readOnlySnapshot().values))
+        else
+            viewValid.set(false)
+    }
 
     /** Drop the local view and re-derive it from a fresh provider query.
       * Returns `true` on success, `false` if the snapshot query failed (in
@@ -104,7 +129,7 @@ final class ChainFollower(ctx: BotCtx, onChange: CdpEvent => Unit) {
                 do cdpView.put(input, (Utxo(input, output), info))
                 true
             case Left(err) =>
-                log.error(s"Failed to re-seed CDP view (keeping previous view, skipping evaluation pass): $err")
+                log.error(s"Failed to re-seed CDP view (keeping previous view, snapshot will report invalid): $err")
                 false
     }
 }

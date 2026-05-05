@@ -9,7 +9,7 @@ import scalus.utils.Hex.toHex
 import scalus.utils.await
 
 import java.time.Instant
-import java.util.concurrent.atomic.AtomicBoolean
+import java.util.concurrent.atomic.{AtomicBoolean, AtomicLong}
 import scala.concurrent.ExecutionContext.Implicits.global
 import scala.concurrent.duration.*
 
@@ -33,6 +33,17 @@ final class Evaluator(ctx: BotCtx) {
     // ~50 ms (one priceLoop tick) instead of waiting for the next push.
     private val viewDirty = new AtomicBoolean(false)
 
+    // Telemetry counters surfaced via BotHandle.
+    private val evaluationsCounter    = new AtomicLong(0L)
+    private val candidatesCounter     = new AtomicLong(0L)
+    private val attemptsCounter       = new AtomicLong(0L)
+    private val submissionsCounter    = new AtomicLong(0L)
+
+    def evaluationsRun: Long        = evaluationsCounter.get()
+    def liquidationCandidates: Long = candidatesCounter.get()
+    def liquidationsAttempted: Long = attemptsCounter.get()
+    def liquidationsSubmitted: Long = submissionsCounter.get()
+
     /** Mark the view dirty so the next priceLoop tick retries. */
     def markViewDirty(): Unit = viewDirty.set(true)
 
@@ -51,23 +62,33 @@ final class Evaluator(ctx: BotCtx) {
         if !evalBusy.compareAndSet(false, true) then
             log.debug("tryEvaluate: previous pass still running, skipping")
             return false
-        try { evaluate(cdps); true }
+        try {
+            // The Boolean tells the caller "I took the slot" so they don't
+            // re-mark dirty for retry. The counter, by contrast, must only
+            // tick when the decider actually ran — a stale-cache short-circuit
+            // is not forward progress.
+            if evaluate(cdps) then evaluationsCounter.incrementAndGet()
+            true
+        }
         finally evalBusy.set(false)
     }
 
     /** Run the decider over the given CDPs against the cached Pyth price and
       * the bot's current PUSD balance. One cache read + one wallet UTxO query
-      * per call, regardless of how many CDPs are evaluated. Returns early if
-      * the cache is empty or stale — no REST fallback (a stale cache means
-      * we should not act).
+      * per call, regardless of how many CDPs are evaluated.
+      *
+      * Returns `true` if the decider was actually invoked (i.e. a fresh
+      * cached price was available); `false` if we short-circuited because
+      * the cache was empty or stale. No REST fallback — a stale cache means
+      * we should not act.
       */
-    private def evaluate(cdps: Iterable[(Utxo, CdpInfo)]): Unit = {
+    private def evaluate(cdps: Iterable[(Utxo, CdpInfo)]): Boolean = {
         val now = Instant.now()
         val cached = ctx.priceCache.current(now, ctx.cfg.priceMaxAgeSeconds) match
             case Some(c) => c
             case None =>
                 log.warn("Cached price unavailable or stale; skipping decision pass")
-                return
+                return false
 
         val pusdUtxos: Utxos = walletPusdUtxos()
         val availablePusd: Long = pusdUtxos.values.map(_.value.asset(ctx.policyId, Assets.Pusd)).sum
@@ -84,9 +105,11 @@ final class Evaluator(ctx: BotCtx) {
                     log.debug(s"Skip ${info.nftName}: $reason")
                 case LiquidationDecider.Decision.Liquidate(ltvBps) =>
                     log.info(s"Liquidate candidate ${info.nftName} at LTV $ltvBps bps")
+                    candidatesCounter.incrementAndGet()
                     if !ctx.cfg.dryRun then
                         submitLiquidation(cdpUtxo, info, pusdUtxos, now, cached.updateBytes)
         }
+        true
     }
 
     private def submitLiquidation(
@@ -96,6 +119,7 @@ final class Evaluator(ctx: BotCtx) {
         now: Instant,
         cachedPriceBytes: ByteString
     ): Unit = {
+        attemptsCounter.incrementAndGet()
         try
             // Greedy-pick only the PUSD UTxOs we actually need to cover this
             // CDP's debt — passing the whole wallet bloats the tx on a
@@ -115,6 +139,7 @@ final class Evaluator(ctx: BotCtx) {
             val signed = ctx.wallet.sign(completed.transaction)
             ctx.streamProvider.submit(signed) match
                 case Right(hash) =>
+                    submissionsCounter.incrementAndGet()
                     log.info(s"Liquidate submitted: txid=${hash.toHex} nft=${info.nftName}")
                 case Left(_: NodeSubmitError.UtxoNotAvailable) =>
                     // Could be the CDP itself (a competing liquidator won the race)

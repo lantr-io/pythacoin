@@ -1,9 +1,8 @@
 package pythacoin.integration
 
 import org.scalatest.funsuite.AnyFunSuite
-import pythacoin.{PythClient, given}
+import pythacoin.{CardanoNet, PythClient, given}
 import pythacoin.bot.{BotConfig, PriceCache, PriceStream, PythChannel}
-import scalus.cardano.address.Network as ScalusNetwork
 import scalus.cardano.ledger.ScriptHash
 
 import java.net.ServerSocket
@@ -31,13 +30,12 @@ class PriceStreamTest extends AnyFunSuite {
 
     /** Construct a config with only the fields PriceStream actually reads. */
     private def configFor(wsUrl: String): BotConfig = BotConfig(
-      network = ScalusNetwork.Testnet,
+      cardanoNet = CardanoNet.Preprod,
       blockfrostApiKey = "",
       pythPolicyIdHex = "00" * 28,
       pythKey = "test-token",
       relayHost = "",
       relayPort = 0,
-      networkMagic = 1L,
       appId = "test",
       walletAddrBech32 = "",
       signingKeyHex = "",
@@ -47,7 +45,8 @@ class PriceStreamTest extends AnyFunSuite {
       dryRun = true,
       pythWsUrl = wsUrl,
       pythChannel = PythChannel.FixedRate200ms,
-      priceMaxAgeSeconds = 60L
+      priceMaxAgeSeconds = 60L,
+      chainStoreDir = None
     )
 
     /** PriceStream calls only `parsePriceRaw`, which is pure byte-parsing.

@@ -1,6 +1,6 @@
 package pythacoin.bot
 
-import scalus.cardano.address.Network as ScalusNetwork
+import pythacoin.CardanoNet
 
 /** Pyth Lazer push-channel rate. The wire-format string is what the WS
   * subscribe message expects; an unknown env value fails fast at startup
@@ -24,15 +24,19 @@ object PythChannel {
   * The bot reads the chain via the embedded scalus-node (N2N to a relay, with
   * Blockfrost as the fall-through backup for snapshot queries and submission)
   * and signs liquidation transactions with `signingKey`.
+  *
+  * `chainStoreDir`, when set, points at a RocksDB directory used as the
+  * persistent ChainStore. If the directory doesn't exist it is created and
+  * the bot does a fresh sync; if it exists, the bot resumes from the last
+  * persisted ChainPoint, dramatically shortening startup time across runs.
   */
 final case class BotConfig(
-    network: ScalusNetwork,
+    cardanoNet: CardanoNet,
     blockfrostApiKey: String,
     pythPolicyIdHex: String,
     pythKey: String,
     relayHost: String,
     relayPort: Int,
-    networkMagic: Long,
     appId: String,
     walletAddrBech32: String,
     signingKeyHex: String,
@@ -42,13 +46,17 @@ final case class BotConfig(
     dryRun: Boolean,
     pythWsUrl: String,
     pythChannel: PythChannel,
-    priceMaxAgeSeconds: Long
+    priceMaxAgeSeconds: Long,
+    chainStoreDir: Option[String]
 )
 
 object BotConfig {
 
-    val PreprodMagic: Long = 1L
-    val MainnetMagic: Long = 764824073L
+    /** Per-network default Cardano relay. Overridable via PYTHACOIN_RELAY_HOST. */
+    private def defaultRelayHost(net: CardanoNet): String = net match
+        case CardanoNet.Mainnet => "backbone.cardano.iog.io"
+        case CardanoNet.Preprod => "preprod-node.play.dev.cardano.org"
+        case CardanoNet.Preview => "preview-node.play.dev.cardano.org"
 
     /** Build a config from the standard env-var surface. Throws on missing required vars. */
     def fromEnv(): BotConfig = fromMap(sys.env)
@@ -62,19 +70,15 @@ object BotConfig {
             env.getOrElse(name, sys.error(s"$name environment variable is not set"))
         def opt(name: String, default: String): String = env.getOrElse(name, default)
 
-        val (network, magic) = opt("PYTHACOIN_NETWORK", "preprod").toLowerCase match
-            case "mainnet" => (ScalusNetwork.Mainnet, MainnetMagic)
-            case "preprod" => (ScalusNetwork.Testnet, PreprodMagic)
-            case other     => sys.error(s"Unsupported PYTHACOIN_NETWORK: $other")
+        val net = CardanoNet.parse(opt("PYTHACOIN_NETWORK", "preprod"))
 
         BotConfig(
-          network = network,
+          cardanoNet = net,
           blockfrostApiKey = req("BLOCKFROST_API_KEY"),
           pythPolicyIdHex = req("PYTH_POLICY_ID"),
           pythKey = req("PYTH_KEY"),
-          relayHost = opt("PYTHACOIN_RELAY_HOST", "preprod-node.play.dev.cardano.org"),
+          relayHost = opt("PYTHACOIN_RELAY_HOST", defaultRelayHost(net)),
           relayPort = opt("PYTHACOIN_RELAY_PORT", "3001").toInt,
-          networkMagic = magic,
           appId = opt("PYTHACOIN_APP_ID", "io.lantr.pythacoin.bot"),
           walletAddrBech32 = req("PYTHACOIN_BOT_ADDR"),
           signingKeyHex = req("PYTHACOIN_BOT_KEY"),
@@ -88,7 +92,8 @@ object BotConfig {
           pythChannel = PythChannel.parse(opt("PYTHACOIN_PYTH_CHANNEL", "fixed_rate@200ms")),
           // 60 s is well under the validator's ±600 s validity window so a tx
           // built from a still-fresh cached price is comfortably accepted.
-          priceMaxAgeSeconds = opt("PYTHACOIN_PRICE_MAX_AGE_SECONDS", "60").toLong
+          priceMaxAgeSeconds = opt("PYTHACOIN_PRICE_MAX_AGE_SECONDS", "60").toLong,
+          chainStoreDir = env.get("PYTHACOIN_CHAIN_STORE_DIR").filter(_.nonEmpty)
         )
     }
 }

@@ -1,6 +1,6 @@
 package pythacoin
 
-import scalus.cardano.address.{Address, Network as ScalusNetwork}
+import scalus.cardano.address.Address
 import scalus.cardano.ledger.*
 import scalus.cardano.node.{BlockchainProvider, BlockfrostProvider}
 import scalus.uplc.PlutusV3
@@ -42,19 +42,23 @@ case class AppCtx(
 
 object AppCtx {
 
-    /** Create AppCtx for mainnet or preprod using Blockfrost as the chain provider. */
+    /** Create AppCtx for mainnet, preprod, or preview using Blockfrost. */
     def apply(
-        network: ScalusNetwork,
+        net: CardanoNet,
         blockfrostApiKey: String,
         pythPolicyIdHex: String,
         pythKey: String
     ): AppCtx = {
-        val (provider, baseUrl) =
-            if network == ScalusNetwork.Mainnet then
-                (BlockfrostProvider.mainnet(blockfrostApiKey).await(30.seconds), "https://cardano-mainnet.blockfrost.io/api/v0")
-            else if network == ScalusNetwork.Testnet then
-                (BlockfrostProvider.preprod(blockfrostApiKey).await(30.seconds), "https://cardano-preprod.blockfrost.io/api/v0")
-            else sys.error(s"Unsupported network: $network")
+        val (provider, baseUrl) = net match
+            case CardanoNet.Mainnet =>
+                (BlockfrostProvider.mainnet(blockfrostApiKey).await(30.seconds),
+                  BlockfrostProvider.mainnetUrl)
+            case CardanoNet.Preprod =>
+                (BlockfrostProvider.preprod(blockfrostApiKey).await(30.seconds),
+                  BlockfrostProvider.preprodUrl)
+            case CardanoNet.Preview =>
+                (BlockfrostProvider.preview(blockfrostApiKey).await(30.seconds),
+                  BlockfrostProvider.previewUrl)
 
         val pythPolicy = ScriptHash.fromHex(pythPolicyIdHex)
         val cdpScript = CdpContract(pythPolicy)

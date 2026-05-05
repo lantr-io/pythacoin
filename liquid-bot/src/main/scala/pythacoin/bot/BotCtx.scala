@@ -1,11 +1,15 @@
 package pythacoin.bot
 
+import org.slf4j.LoggerFactory
 import pythacoin.{AppCtx, given}
 import scalus.cardano.address.Address
 import scalus.cardano.ledger.ScriptHash
-import scalus.cardano.node.stream.{BackupSource, ChainSyncSource}
+import scalus.cardano.node.stream.{BackupSource, ChainSyncSource, StreamProviderConfig}
+import scalus.cardano.node.stream.engine.{ChainStore, KvChainStore}
+import scalus.cardano.node.stream.engine.kvstore.rocksdb.RocksDbKvStore
 import scalus.cardano.node.stream.ox.OxBlockchainStreamProvider
 
+import java.nio.file.{Files, Paths}
 import scala.concurrent.ExecutionContext.Implicits.global
 
 /** Application context for the bot — analogue of `pythacoin.AppCtx`, but the
@@ -37,8 +41,8 @@ final class BotCtx(
       */
     def show: String =
         s"""Pythacoin bot context:
-           |  network            = ${cfg.network}
-           |  relay              = ${cfg.relayHost}:${cfg.relayPort} (magic ${cfg.networkMagic})
+           |  network            = ${cfg.cardanoNet}
+           |  relay              = ${cfg.relayHost}:${cfg.relayPort} (magic ${cfg.cardanoNet.magic})
            |  appId              = ${cfg.appId}
            |  cdp script address = ${BotCtx.renderAddress(scriptAddr)}
            |  cdp policy id      = ${policyId.toHex}
@@ -49,6 +53,7 @@ final class BotCtx(
            |  pyth ws url        = ${cfg.pythWsUrl}
            |  pyth channel       = ${cfg.pythChannel.wireName}
            |  price max age      = ${cfg.priceMaxAgeSeconds} s
+           |  chain store dir    = ${cfg.chainStoreDir.getOrElse("(none — ephemeral)")}
            |  dryRun             = ${cfg.dryRun}""".stripMargin
 
     override def close(): Unit = streamProvider.close()
@@ -56,22 +61,35 @@ final class BotCtx(
 
 object BotCtx {
 
+    private val log = LoggerFactory.getLogger(BotCtx.getClass)
+
     /** Bech32 if the address has a hrp, otherwise hex. Shared by the startup
       * banner and the chain-follower subscription log.
       */
     def renderAddress(a: Address): String = a.encode.getOrElse(a.toHex)
 
     def apply(cfg: BotConfig): BotCtx = {
-        val appCtx = AppCtx(cfg.network, cfg.blockfrostApiKey, cfg.pythPolicyIdHex, cfg.pythKey)
-        val provider = OxBlockchainStreamProvider.create(
+        val appCtx = AppCtx(cfg.cardanoNet, cfg.blockfrostApiKey, cfg.pythPolicyIdHex, cfg.pythKey)
+
+        val maybeChainStore: Option[ChainStore] = cfg.chainStoreDir.map { dir =>
+            val path = Paths.get(dir)
+            // createDirectories is a no-op if the dir already exists; RocksDB
+            // will tell us whether it created fresh or recovered from the LOG.
+            Files.createDirectories(path)
+            log.info(s"ChainStore: opening RocksDB at $path")
+            new KvChainStore(RocksDbKvStore.open(path))
+        }
+
+        val streamCfg = StreamProviderConfig(
           appId = cfg.appId,
           cardanoInfo = appCtx.cardanoInfo,
-          chainSync = ChainSyncSource.N2N(cfg.relayHost, cfg.relayPort, cfg.networkMagic),
-          // Reuse the provider AppCtx already built (Blockfrost mainnet/preprod
-          // or Yaci local), instead of opening a second Blockfrost connection
-          // and duplicating the network-selection logic.
-          backup = BackupSource.Custom(appCtx.provider)
+          chainSync = ChainSyncSource.N2N(cfg.relayHost, cfg.relayPort, cfg.cardanoNet.magic),
+          // Reuse the provider AppCtx already built (Blockfrost mainnet/preprod/preview)
+          // instead of opening a second Blockfrost connection.
+          backup = BackupSource.Custom(appCtx.provider),
+          chainStore = maybeChainStore
         )
+        val provider = OxBlockchainStreamProvider.create(streamCfg)
         val wallet = Wallet.fromConfig(cfg)
         new BotCtx(cfg, appCtx, provider, wallet, new PriceCache)
     }

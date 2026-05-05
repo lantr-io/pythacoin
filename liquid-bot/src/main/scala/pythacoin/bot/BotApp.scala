@@ -50,8 +50,12 @@ object BotApp extends OxApp {
       *   - the priceLoop poll that bridges the WS write-side to the read-side
       *     and doubles as the retry mechanism for Reseeded events that get
       *     dropped by the busy gate.
+      *
+      * `observe` runs once on the bot's launch thread before the chain-follower
+      * loop takes over; tests use it to capture the [[BotHandle]] for later
+      * polling. Must not block — it would stall the follower fork.
       */
-    def runWithConfig(cfg: BotConfig)(using Ox): Unit = {
+    def runWithConfig(cfg: BotConfig, observe: BotHandle => Unit = _ => ())(using Ox): Unit = {
         val ctx = useCloseableInScope(BotCtx(cfg))
         log.info(s"Starting\n${ctx.show}")
         val evaluator = new Evaluator(ctx)
@@ -62,6 +66,7 @@ object BotApp extends OxApp {
         fork {
             priceLoop(ctx, evaluator, () => follower.snapshot())
         }
+        observe(BotHandle(ctx, follower, evaluator))
         follower.runForever()
     }
 

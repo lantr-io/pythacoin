@@ -74,23 +74,35 @@ final class Evaluator(ctx: BotCtx) {
         if !evalBusy.compareAndSet(false, true) then
             log.debug("tryEvaluate: previous pass still running, skipping")
             return false
-        try { evaluate(cdps); evaluationsCounter.incrementAndGet(); true }
+        try {
+            // tryEvaluate's bool tells the caller "I took the slot, don't
+            // mark dirty for retry"; that decision is independent of whether
+            // a price was actually available. The counter, in contrast, must
+            // only count passes that actually ran the decider — otherwise
+            // `evaluationsRun` reads as forward progress while we're really
+            // just spinning waiting for the first WS push.
+            if evaluate(cdps) then evaluationsCounter.incrementAndGet()
+            true
+        }
         finally evalBusy.set(false)
     }
 
     /** Run the decider over the given CDPs against the cached Pyth price and
       * the bot's current PUSD balance. One cache read + one wallet UTxO query
-      * per call, regardless of how many CDPs are evaluated. Returns early if
-      * the cache is empty or stale — no REST fallback (a stale cache means
-      * we should not act).
+      * per call, regardless of how many CDPs are evaluated.
+      *
+      * Returns `true` if the decider was actually invoked (i.e. a fresh
+      * cached price was available); `false` if we short-circuited because
+      * the cache was empty or stale. No REST fallback — a stale cache means
+      * we should not act.
       */
-    private def evaluate(cdps: Iterable[(Utxo, CdpInfo)]): Unit = {
+    private def evaluate(cdps: Iterable[(Utxo, CdpInfo)]): Boolean = {
         val now = Instant.now()
         val cached = ctx.priceCache.current(now, ctx.cfg.priceMaxAgeSeconds) match
             case Some(c) => c
             case None =>
                 log.warn("Cached price unavailable or stale; skipping decision pass")
-                return
+                return false
 
         val pusdUtxos: Utxos = walletPusdUtxos()
         val availablePusd: Long = pusdUtxos.values.map(_.value.asset(ctx.policyId, Assets.Pusd)).sum
@@ -111,6 +123,7 @@ final class Evaluator(ctx: BotCtx) {
                     if !ctx.cfg.dryRun then
                         submitLiquidation(cdpUtxo, info, pusdUtxos, now, cached.updateBytes)
         }
+        true
     }
 
     private def submitLiquidation(

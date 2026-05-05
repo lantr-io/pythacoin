@@ -74,10 +74,15 @@ lazy val liquidBot = (project in file("liquid-bot"))
     )
 
 // Integration tests — Yaci-DevKit and preprod scenarios. Depends on commonLib
-// (for AppCtx, queries, tx-builders) and on endpoints in test scope only
-// (PreprodCdpTest hits the running HTTP server but uses no endpoint types).
+// (for AppCtx, queries, tx-builders), endpoints in test scope (PreprodCdpTest
+// hits the running HTTP server), and liquidBot in test scope (LiquidationFlowTest
+// drives BotApp/Evaluator/PriceCache against a Yaci + fake-Lazer harness).
 lazy val integration = (project in file("integration"))
-    .dependsOn(commonLib % "compile->compile;test->test", endpoints % "test->compile")
+    .dependsOn(
+      commonLib % "compile->compile;test->test",
+      endpoints % "test->compile",
+      liquidBot % "test->compile"
+    )
     .settings(scalusPluginSettings)
     .settings(
       publish / skip := true,
@@ -85,7 +90,10 @@ lazy val integration = (project in file("integration"))
         "org.scalus" %% "scalus-testkit" % scalusVersion,
         "com.dimafeng" %% "testcontainers-scala-core" % "0.44.1" % Test,
         "com.dimafeng" %% "testcontainers-scala-scalatest" % "0.44.1" % Test,
-        "com.bloxbean.cardano" % "yaci-cardano-test" % "0.1.0" % Test
+        "com.bloxbean.cardano" % "yaci-cardano-test" % "0.1.0" % Test,
+        // Tiny pure-Java WS server for FakeLazerServer; the JDK only ships a
+        // WS *client*. Test scope only — the production bot uses java.net.http.
+        "org.java-websocket" % "Java-WebSocket" % "1.5.7" % Test
       ) ++ scalatestDeps
     )
 

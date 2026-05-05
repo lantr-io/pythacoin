@@ -14,9 +14,12 @@ trait YaciDevKitTest extends YaciDevKit { self: Suite =>
           "aabbccddaabbccddaabbccddaabbccddaabbccddaabbccddaabbccdd"
         )
         val cdpScript = CdpContract(pythPolicyId)
+        // Yaci-Store binds inside the container on 8080 but the host port is
+        // randomised by Testcontainers — ask the container for the actual URL.
+        val yaciStoreUrl = container.getYaciStoreApiUrl().stripSuffix("/")
         new AppCtx(
           context.cardanoInfo, context.provider,
-          "", "http://localhost:8080/api/v1",
+          "", yaciStoreUrl,
           pythPolicyId, "", cdpScript
         )
     }

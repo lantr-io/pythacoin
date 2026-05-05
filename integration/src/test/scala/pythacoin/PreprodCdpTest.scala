@@ -1,6 +1,7 @@
 package pythacoin
 
 import org.scalatest.funsuite.AnyFunSuite
+import pythacoin.integration.PreprodTag
 import scalus.cardano.address.Network
 import scalus.cardano.ledger.*
 import scalus.cardano.node.BlockfrostProvider
@@ -68,7 +69,7 @@ class PreprodCdpTest extends AnyFunSuite {
         json.substring(start, end)
     }
 
-    test("Alice opens CDP 100 ADA / 10 PUSD, then closes it") {
+    test("Alice opens CDP 100 ADA / 10 PUSD, then closes it", PreprodTag) {
         val env = loadEnv()
         val mnemonic = env("MNEMONIC")
         val blockfrostApiKey = env("BLOCKFROST_API_KEY")

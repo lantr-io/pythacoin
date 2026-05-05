@@ -1,10 +1,11 @@
 package pythacoin.integration
 
 import org.slf4j.LoggerFactory
-import scalus.cardano.address.Address
+import scalus.cardano.address.{Address, StakeAddress, StakePayload}
 import scalus.cardano.ledger.*
 import scalus.cardano.node.BlockchainProvider
-import scalus.cardano.txbuilder.{TransactionSigner, txBuilder}
+import scalus.cardano.txbuilder.{TransactionSigner, TwoArgumentPlutusScriptWitness, txBuilder}
+import scalus.cardano.txbuilder.ScriptSource
 import scalus.cardano.onchain.plutus.prelude.List as PList
 import scalus.uplc.PlutusV3
 import scalus.uplc.builtin.{ByteString, Data}
@@ -72,9 +73,23 @@ object PythStateBootstrap {
           scriptRef = Some(ScriptRef(alwaysOkScript))
         )
 
+        // The bot's `liquidateCdp` invokes the Pyth withdraw script via the
+        // "withdraw zero" pattern (`withdrawRewards(stakeAddr, 0, witness)`).
+        // That requires the script-stake credential to be *registered* on the
+        // ledger first — without it the node rejects the tx with
+        // `WithdrawalsNotInRewardsCERTS`. Real preprod has it pre-registered;
+        // on a fresh Yaci-DevKit we must register it as part of bootstrap.
+        val withdrawStakeAddress =
+            StakeAddress(cardanoInfo.network, StakePayload.Script(withdrawScriptHash))
+        val withdrawWitness = TwoArgumentPlutusScriptWitness(
+          ScriptSource.PlutusScriptValue(alwaysOkScript),
+          Data.unit
+        )
+
         val builder = txBuilder
             .mint(PlutusV3.alwaysOk, Map(PythStateAssetName -> 1L), Data.unit)
             .output(stateOutput)
+            .registerStake(withdrawStakeAddress, withdrawWitness)
 
         val completed = builder.complete(provider, sourceAddr).await(30.seconds)
         val signed = signer.sign(completed.transaction)

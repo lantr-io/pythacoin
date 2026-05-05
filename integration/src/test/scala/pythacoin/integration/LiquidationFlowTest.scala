@@ -5,6 +5,7 @@ import pythacoin.{AppCtx, Assets, CdpContract, PythClient, YaciDevKitTest, given
 import pythacoin.bot.PusdSelection
 import scalus.cardano.address.{Address, Network}
 import scalus.cardano.ledger.*
+import scalus.cardano.txbuilder.txBuilder
 import scalus.testing.integration.YaciTestContext
 import scalus.uplc.builtin.ByteString
 import scalus.utils.await
@@ -36,19 +37,19 @@ import scala.concurrent.duration.*
   */
 class LiquidationFlowTest extends AnyFunSuite with YaciDevKitTest {
 
-    /** Yaci-DevKit's testcontainer maps its Blockfrost-compatible Yaci-Store
-      * API at this URL by default. Same value the existing
-      * `YaciDevKitTest.createAppCtx()` helper uses.
-      */
-    private val yaciBlockfrostUrl = "http://localhost:8080/api/v1"
-
     test("liquidation flow: cached low-price bytes drive a valid Liquidate tx") {
         val yaciCtx = createTestContext().asInstanceOf[YaciTestContext]
         val provider = yaciCtx.provider
         val cardanoInfo = yaciCtx.cardanoInfo
         val alice = yaciCtx.alice
 
-        info(s"Yaci envName=${yaciCtx.envName}, network=${cardanoInfo.network}")
+        // Yaci-DevKit's testcontainer maps the Yaci-Store API on a *random*
+        // host port. Hardcoding 8080 only works if nothing else holds the
+        // port; ask the container for the real URL. Strip the trailing
+        // slash because PythClient builds `uri"$base/assets/..."`.
+        val yaciBlockfrostUrl = container.getYaciStoreApiUrl().stripSuffix("/")
+
+        info(s"Yaci envName=${yaciCtx.envName}, network=${cardanoInfo.network}, store=$yaciBlockfrostUrl")
 
         // --- Step 1: bootstrap Pyth State ---
         info("Bootstrapping Pyth State UTxO (alwaysOk policy + alwaysOk withdraw script)")
@@ -71,10 +72,11 @@ class LiquidationFlowTest extends AnyFunSuite with YaciDevKitTest {
 
         // --- Step 3: open a CDP with safe LTV at price $0.75 ---
         // 200 ADA collateral, 70 PUSD debt: at price 0.75 → value $150, LTV 70/150 ≈ 47%.
-        // Drop to price 0.40 → value $80, LTV 70/80 ≈ 87.5% (still healthy).
         // Drop to price 0.30 → value $60, LTV 70/60 ≈ 117% (well past 90%).
+        // NB: `openCdp(debtPusd)` expects micro-PUSD (1 PUSD = 1_000_000).
         val initialPrice = 75_000_000L
         val initialBytes = ByteString.unsafeFromArray(FakeLazerServer.buildPayload(initialPrice))
+        val debtMicroPusd = 70_000_000L // 70 PUSD
 
         val nftName = AssetName(ByteString.fromString("test-cdp"))
         val ownerPkh = scalus.cardano.onchain.plutus.v1.PubKeyHash(
@@ -84,7 +86,7 @@ class LiquidationFlowTest extends AnyFunSuite with YaciDevKitTest {
         info("Opening CDP: 200 ADA collateral, 70 PUSD debt, initial price $0.75")
         val openBuilder = appCtx.cdpTransactions.openCdp(
           collateralLovelace = 200_000_000L,
-          debtPusd = 70L,
+          debtPusd = debtMicroPusd,
           nftName = nftName,
           ownerPkh = ownerPkh,
           ownerAddr = alice.address,
@@ -111,16 +113,37 @@ class LiquidationFlowTest extends AnyFunSuite with YaciDevKitTest {
         val parsedRaw = appCtx.pythClient.parsePriceRaw(lowBytes)
         assert(parsedRaw == lowPrice, s"parsePriceRaw round-trip: $parsedRaw != $lowPrice")
 
-        // --- Step 6: gather alice's PUSD UTxOs (alice == liquidator here) ---
-        val pusdUtxos: Utxos = provider.findUtxos(alice.address).await(15.seconds) match
-            case Right(found) =>
-                found.filter { case (_, o) => o.value.asset(appCtx.policyId, Assets.Pusd) > 0 }
-            case Left(err) => fail(s"Wallet UTxO query failed: $err")
-        val totalPusd = pusdUtxos.values.map(_.value.asset(appCtx.policyId, Assets.Pusd)).sum
-        info(s"Liquidator PUSD UTxOs: ${pusdUtxos.size}, total=$totalPusd PUSD")
-        assert(totalPusd >= 70L, s"Liquidator must hold ≥70 PUSD; has $totalPusd")
+        // The open tx leaves a single big mixed (ADA + PUSD) change UTxO at
+        // alice's address — no pure-ADA UTxO eligible for collateral. Split
+        // off a small pure-ADA self-pay first; auto-balancing doesn't pick
+        // collateral for the liquidate tx because `.spend(liquidatorPusdUtxos)`
+        // constrains the input set.
+        info("Splitting off a 5-ADA pure-ADA UTxO for collateral")
+        given CardanoInfo = cardanoInfo
+        val splitTx = txBuilder.payTo(alice.address, Value.lovelace(5_000_000L))
+            .complete(provider, alice.address).await(30.seconds)
+        provider.submit(alice.signer.sign(splitTx.transaction)).await(30.seconds) match
+            case Right(_)  => yaciCtx.waitForBlock()
+            case Left(err) => fail(s"Collateral split tx failed: $err")
 
-        val selectedPusd = PusdSelection.greedy(pusdUtxos, appCtx.policyId, 70L)
+        // --- Step 6: gather alice's PUSD + collateral UTxOs (post-split) ---
+        val allAlice = provider.findUtxos(alice.address).await(15.seconds) match
+            case Right(found) => found
+            case Left(err) => fail(s"Wallet UTxO query failed: $err")
+        val pusdUtxos: Utxos = allAlice.filter {
+            case (_, o) => o.value.asset(appCtx.policyId, Assets.Pusd) > 0
+        }
+        val totalPusd = pusdUtxos.values.map(_.value.asset(appCtx.policyId, Assets.Pusd)).sum
+        info(s"Liquidator PUSD UTxOs: ${pusdUtxos.size}, total=$totalPusd μPUSD")
+        assert(totalPusd >= debtMicroPusd,
+          s"Liquidator must hold ≥$debtMicroPusd μPUSD; has $totalPusd")
+
+        val selectedPusd = PusdSelection.greedy(pusdUtxos, appCtx.policyId, debtMicroPusd)
+
+        val collateralUtxo: Utxo = allAlice
+            .find { case (_, o) => o.value.assets.assets.isEmpty && o.value.coin.value >= 5_000_000L && o.value.coin.value < 10_000_000L }
+            .map { case (in, out) => Utxo(in, out) }
+            .getOrElse(fail(s"No pure-ADA collateral UTxO at alice. Have: $allAlice"))
 
         // --- Step 7: build + submit the liquidation tx ---
         info(s"Building liquidation tx with cached low-price bytes (raw=$lowPrice ⇒ ~0.30 ADA/USD)")
@@ -130,7 +153,7 @@ class LiquidationFlowTest extends AnyFunSuite with YaciDevKitTest {
           liquidatorPusdUtxos = selectedPusd,
           now = Instant.now(),
           cachedPriceBytes = Some(lowBytes)
-        )
+        ).collaterals(collateralUtxo)
         val liqCompleted = liqBuilder.complete(provider, alice.address).await(60.seconds)
         val signedLiq = alice.signer.sign(liqCompleted.transaction)
         provider.submit(signedLiq).await(60.seconds) match

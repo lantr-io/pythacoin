@@ -86,6 +86,12 @@ lazy val integration = (project in file("integration"))
     .settings(scalusPluginSettings)
     .settings(
       publish / skip := true,
+      // Default `integration/test` excludes preprod-only smoke tests so a clean
+      // run doesn't need .env / Blockfrost credentials. Run them explicitly with
+      //   sbt 'integration/testOnly *Preprod* -- -n pythacoin.integration.PreprodTag'
+      Test / testOptions += Tests.Argument(
+        TestFrameworks.ScalaTest, "-l", "pythacoin.integration.PreprodTag"
+      ),
       libraryDependencies ++= Seq(
         "org.scalus" %% "scalus-testkit" % scalusVersion,
         "com.dimafeng" %% "testcontainers-scala-core" % "0.44.1" % Test,

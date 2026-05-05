@@ -9,7 +9,7 @@ import scalus.utils.Hex.toHex
 import scalus.utils.await
 
 import java.time.Instant
-import java.util.concurrent.atomic.AtomicBoolean
+import java.util.concurrent.atomic.{AtomicBoolean, AtomicLong}
 import scala.concurrent.ExecutionContext.Implicits.global
 import scala.concurrent.duration.*
 
@@ -33,6 +33,29 @@ final class Evaluator(ctx: BotCtx) {
     // ~50 ms (one priceLoop tick) instead of waiting for the next push.
     private val viewDirty = new AtomicBoolean(false)
 
+    // Telemetry counters for the BotHandle observability surface. Tests assert
+    // on these to confirm the bot is making forward progress without scraping
+    // logs. Cheap to maintain (one volatile inc per call) and useful in prod
+    // diagnostics too.
+    private val evaluationsCounter      = new AtomicLong(0L)
+    private val candidatesCounter       = new AtomicLong(0L)
+    private val liquidationsAttempted   = new AtomicLong(0L)
+    private val liquidationsSubmitted   = new AtomicLong(0L)
+
+    /** Number of evaluation passes that have actually run (i.e. weren't dropped
+      * by the busy gate or empty-cdps short-circuit). */
+    def evaluationsRun: Long = evaluationsCounter.get()
+
+    /** Total CDPs flagged as Liquidate by the decider (including dry-run hits). */
+    def liquidationCandidates: Long = candidatesCounter.get()
+
+    /** Total liquidation tx attempts (excluding dry-run; counts every call into
+      * `submitLiquidation`, regardless of outcome). */
+    def liquidationsAttemptedCount: Long = liquidationsAttempted.get()
+
+    /** Total liquidations that the chain accepted (per the submit response). */
+    def liquidationsSubmittedCount: Long = liquidationsSubmitted.get()
+
     /** Mark the view dirty so the next priceLoop tick retries. */
     def markViewDirty(): Unit = viewDirty.set(true)
 
@@ -51,7 +74,7 @@ final class Evaluator(ctx: BotCtx) {
         if !evalBusy.compareAndSet(false, true) then
             log.debug("tryEvaluate: previous pass still running, skipping")
             return false
-        try { evaluate(cdps); true }
+        try { evaluate(cdps); evaluationsCounter.incrementAndGet(); true }
         finally evalBusy.set(false)
     }
 
@@ -84,6 +107,7 @@ final class Evaluator(ctx: BotCtx) {
                     log.debug(s"Skip ${info.nftName}: $reason")
                 case LiquidationDecider.Decision.Liquidate(ltvBps) =>
                     log.info(s"Liquidate candidate ${info.nftName} at LTV $ltvBps bps")
+                    candidatesCounter.incrementAndGet()
                     if !ctx.cfg.dryRun then
                         submitLiquidation(cdpUtxo, info, pusdUtxos, now, cached.updateBytes)
         }
@@ -96,6 +120,7 @@ final class Evaluator(ctx: BotCtx) {
         now: Instant,
         cachedPriceBytes: ByteString
     ): Unit = {
+        liquidationsAttempted.incrementAndGet()
         try
             // Greedy-pick only the PUSD UTxOs we actually need to cover this
             // CDP's debt — passing the whole wallet bloats the tx on a
@@ -115,6 +140,7 @@ final class Evaluator(ctx: BotCtx) {
             val signed = ctx.wallet.sign(completed.transaction)
             ctx.streamProvider.submit(signed) match
                 case Right(hash) =>
+                    liquidationsSubmitted.incrementAndGet()
                     log.info(s"Liquidate submitted: txid=${hash.toHex} nft=${info.nftName}")
                 case Left(_: NodeSubmitError.UtxoNotAvailable) =>
                     // Could be the CDP itself (a competing liquidator won the race)

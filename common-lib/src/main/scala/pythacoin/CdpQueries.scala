@@ -3,7 +3,6 @@ package pythacoin
 import pythacoin.onchain.CdpDatum
 import scalus.cardano.ledger.*
 import scalus.uplc.builtin.ByteString
-import scalus.uplc.builtin.ByteString.utf8
 import scalus.utils.await
 
 import scala.concurrent.ExecutionContext.Implicits.global
@@ -16,7 +15,6 @@ import scala.concurrent.duration.*
 class CdpQueries(ctx: AppCtx) {
 
     private val policyId = ctx.policyId
-    private val pusdAsset = AssetName(utf8"PUSD")
 
     /** List all CDPs at the script address. */
     def listCdps(): Seq[CdpInfo] = {
@@ -46,26 +44,28 @@ class CdpQueries(ctx: AppCtx) {
         }
     }
 
-    /** Parse CdpInfo from a transaction output, if it's a valid CDP. */
-    private def parseCdpInfo(output: TransactionOutput): Option[CdpInfo] = {
-        // Check that output has our policy's tokens
+    /** Parse `CdpInfo` from a transaction output, if it's a valid CDP — i.e. it
+      * carries an inline datum and exactly one non-PUSD token of quantity 1
+      * under our policy (the CDP NFT). Public so the bot can reuse the same
+      * predicate without duplicating it.
+      */
+    def parseCdpInfo(output: TransactionOutput): Option[CdpInfo] = {
         val assets = output.value.assets.assets.getOrElse(policyId, Map.empty)
-        val nftEntries = assets.filter { case (name, _) => name != pusdAsset }
+        val nftEntries = assets.filter { case (name, _) => name != Assets.Pusd }
 
-        nftEntries.headOption.flatMap { case (nftName, _) =>
-            output.inlineDatum.map { data =>
-                val datum = data.to[CdpDatum]
-                val collateral = output.value.coin.value
-                val debt = datum.debt.toLong
-                CdpInfo(
-                  nftName = nftName.bytes.toHex,
-                  owner = datum.owner.hash.toHex,
-                  collateralLovelace = collateral,
-                  debtPusd = debt,
-                  ltv = 0.0 // computed by frontend with current price
-                )
-            }
-        }
+        nftEntries.toList match
+            case (nftName, qty) :: Nil if qty == 1L =>
+                output.inlineDatum.map { data =>
+                    val datum = data.to[CdpDatum]
+                    CdpInfo(
+                      nftName = nftName.bytes.toHex,
+                      owner = datum.owner.hash.toHex,
+                      collateralLovelace = output.value.coin.value,
+                      debtPusd = datum.debt.toLong,
+                      ltv = 0.0 // computed by frontend with current price
+                    )
+                }
+            case _ => None
     }
 }
 

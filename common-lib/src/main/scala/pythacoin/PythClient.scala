@@ -8,7 +8,6 @@ import scalus.utils.Hex.toHex
 import scalus.utils.await
 import sttp.client4.*
 
-import java.util.Base64
 import scala.concurrent.ExecutionContext.Implicits.global
 import scala.concurrent.Future
 import scala.concurrent.duration.*
@@ -50,12 +49,8 @@ class PythClient(
 
         response.body match
             case Right(body) =>
-                val encoding = extractSolanaEncoding(body)
-                val data = extractSolanaData(body)
-//                Log.info(s"Pyth Lazer response encoding=$encoding, data length=${data.length}")
-                encoding match
-                    case "base64" => ByteString.fromArray(Base64.getDecoder.decode(data))
-                    case _        => ByteString.fromHex(data)
+                PythLazerEnvelope.decode(body)
+                    .getOrElse(throw RuntimeException(s"No solana payload in Pyth Lazer response: $body"))
             case Left(error) =>
                 Log.error(s"Pyth Lazer API error: $error")
                 throw RuntimeException(s"Pyth Lazer API error: $error")
@@ -169,42 +164,23 @@ class PythClient(
         StakeAddress(network, StakePayload.Script(withdrawHash))
     }
 
-    /** Parse ADA/USD price from Pyth update bytes for display (off-chain).
-      * Mirrors the on-chain parsePythPrice logic but uses JVM ByteBuffer for convenience.
-      * Returns price as a BigDecimal (e.g. 0.7523 for $0.7523/ADA).
+    /** Parse the raw 8-decimal integer ADA/USD price from Pyth update bytes —
+      * same encoding the on-chain `parsePythPrice` uses, so the bot's LTV check
+      * stays bit-for-bit consistent with the validator. Off-chain consumers
+      * that need a human-readable value should call `parsePrice` instead.
+      *
+      * Layout: Solana envelope `[4 magic][64 sig][32 key][2 payload_size]` (102
+      * bytes), payload header `[4 magic][8 timestamp][1 channel][1 feeds_len]`
+      * (14 bytes), feed `[4 feed_id][1 props_len][1 prop_id][8 price I64 LE]`.
       */
-    def parsePrice(updateBytes: ByteString): BigDecimal = {
+    def parsePriceRaw(updateBytes: ByteString): Long = {
         import java.nio.{ByteBuffer, ByteOrder}
         val buf = ByteBuffer.wrap(updateBytes.bytes).order(ByteOrder.LITTLE_ENDIAN)
-        // Solana envelope: [4 magic][64 sig][32 key][2 payload_size] = 102 bytes
-        // Payload header:  [4 magic][8 timestamp][1 channel][1 feeds_len] = 14 bytes
-        // Feed starts at 102 + 14 = 116
-        val feedOffset = 116
-        // Feed: [4 feed_id][1 props_len][1 prop_id][8 price I64 LE]
-        val priceOffset = feedOffset + 6
-        buf.position(priceOffset)
-        val priceRaw = buf.getLong()
-        BigDecimal(priceRaw) / BigDecimal(100_000_000L) // exponent = -8
+        buf.position(116 + 6) // envelope (102) + payload header (14) + feed prefix (6)
+        buf.getLong()
     }
 
-    /** Extract the solana.encoding field from JSON response. */
-    private def extractSolanaEncoding(json: String): String = {
-        val key = "\"encoding\":\""
-        val idx = json.lastIndexOf(key)
-        if idx < 0 then return "hex" // default
-        val start = idx + key.length
-        val end = json.indexOf('"', start)
-        if end < 0 then "hex" else json.substring(start, end)
-    }
-
-    /** Extract the solana.data field from JSON response. */
-    private def extractSolanaData(json: String): String = {
-        val dataKey = "\"data\":\""
-        val idx = json.lastIndexOf(dataKey)
-        if idx < 0 then throw RuntimeException(s"Cannot find solana.data in response: $json")
-        val start = idx + dataKey.length
-        val end = json.indexOf('"', start)
-        if end < 0 then throw RuntimeException(s"Malformed solana.data in response: $json")
-        json.substring(start, end)
-    }
+    /** ADA/USD price as `BigDecimal` (e.g. 0.7523 for $0.7523/ADA), for display. */
+    def parsePrice(updateBytes: ByteString): BigDecimal =
+        BigDecimal(parsePriceRaw(updateBytes)) / BigDecimal(100_000_000L)
 }

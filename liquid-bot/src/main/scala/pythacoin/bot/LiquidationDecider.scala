@@ -1,6 +1,7 @@
 package pythacoin.bot
 
 import pythacoin.CdpInfo
+import pythacoin.onchain.CdpConsts
 
 /** Pure decision logic. Mirrors the on-chain LTV check from
   * `pythacoin.onchain.CdpValidator.isLtvBelow`:
@@ -17,11 +18,7 @@ import pythacoin.CdpInfo
   */
 object LiquidationDecider {
 
-    /** Pyth ADA/USD has 8 decimal places (exponent = -8). Same constant as on-chain
-      * `CdpValidator.ORACLE_SCALE`; replicated here so the decider has no
-      * compile-time dependency on the validator object.
-      */
-    private val OracleScale: BigInt = BigInt(100_000_000)
+    private val OracleScale: BigInt = CdpConsts.ORACLE_SCALE
     private val LtvScaleBps: BigInt = BigInt(10_000)
 
     enum Decision {

@@ -1,6 +1,6 @@
 package pythacoin
 
-import scalus.cardano.address.{Address, Network as ScalusNetwork}
+import scalus.cardano.address.Address
 import scalus.cardano.ledger.*
 import scalus.cardano.node.{BlockchainProvider, BlockfrostProvider}
 import scalus.uplc.PlutusV3
@@ -42,51 +42,28 @@ case class AppCtx(
 
 object AppCtx {
 
-    /** Network identifier for AppCtx construction. Scalus's `Network` enum
-      * collapses preview + preprod into `Testnet`, but we must distinguish
-      * them here to pick the right Blockfrost endpoint.
-      */
-    enum BlockfrostNet { case Mainnet, Preprod, Preview }
-
     /** Create AppCtx for mainnet, preprod, or preview using Blockfrost. */
     def apply(
-        net: BlockfrostNet,
+        net: CardanoNet,
         blockfrostApiKey: String,
         pythPolicyIdHex: String,
         pythKey: String
     ): AppCtx = {
         val (provider, baseUrl) = net match
-            case BlockfrostNet.Mainnet =>
+            case CardanoNet.Mainnet =>
                 (BlockfrostProvider.mainnet(blockfrostApiKey).await(30.seconds),
-                  "https://cardano-mainnet.blockfrost.io/api/v0")
-            case BlockfrostNet.Preprod =>
+                  BlockfrostProvider.mainnetUrl)
+            case CardanoNet.Preprod =>
                 (BlockfrostProvider.preprod(blockfrostApiKey).await(30.seconds),
-                  "https://cardano-preprod.blockfrost.io/api/v0")
-            case BlockfrostNet.Preview =>
+                  BlockfrostProvider.preprodUrl)
+            case CardanoNet.Preview =>
                 (BlockfrostProvider.preview(blockfrostApiKey).await(30.seconds),
-                  "https://cardano-preview.blockfrost.io/api/v0")
+                  BlockfrostProvider.previewUrl)
 
         val pythPolicy = ScriptHash.fromHex(pythPolicyIdHex)
         val cdpScript = CdpContract(pythPolicy)
 
         new AppCtx(provider.cardanoInfo, provider, blockfrostApiKey, baseUrl, pythPolicy, pythKey, cdpScript)
-    }
-
-    /** Back-compat shim for the old (Network, ...) signature. Uses preprod for
-      * `Testnet` since preview was added later — call the `(BlockfrostNet, ...)`
-      * overload directly to opt into preview.
-      */
-    def apply(
-        network: ScalusNetwork,
-        blockfrostApiKey: String,
-        pythPolicyIdHex: String,
-        pythKey: String
-    ): AppCtx = {
-        val net = network match
-            case ScalusNetwork.Mainnet => BlockfrostNet.Mainnet
-            case ScalusNetwork.Testnet => BlockfrostNet.Preprod
-            case other                 => sys.error(s"Unsupported network: $other")
-        apply(net, blockfrostApiKey, pythPolicyIdHex, pythKey)
     }
 
     /** Create AppCtx for local development using Yaci DevKit (no real Pyth oracle). */

@@ -1,6 +1,6 @@
 package pythacoin.bot
 
-import scalus.cardano.address.Network as ScalusNetwork
+import pythacoin.CardanoNet
 
 /** Pyth Lazer push-channel rate. The wire-format string is what the WS
   * subscribe message expects; an unknown env value fails fast at startup
@@ -18,17 +18,6 @@ object PythChannel {
     )
 }
 
-/** Which Cardano testnet (or mainnet) we're talking to. Drives the Blockfrost
-  * endpoint, network magic, and a couple of relay defaults. Scalus's own
-  * `Network` enum collapses preview + preprod into `Testnet`, so we keep this
-  * separate enum to disambiguate.
-  */
-enum BotNetwork(val scalusNetwork: ScalusNetwork, val magic: Long) {
-    case Mainnet extends BotNetwork(ScalusNetwork.Mainnet, 764824073L)
-    case Preprod extends BotNetwork(ScalusNetwork.Testnet, 1L)
-    case Preview extends BotNetwork(ScalusNetwork.Testnet, 2L)
-}
-
 /** Static configuration for the liquidation bot. Built once at startup from
   * environment variables / CLI flags; never mutated afterwards.
   *
@@ -42,7 +31,7 @@ enum BotNetwork(val scalusNetwork: ScalusNetwork, val magic: Long) {
   * persisted ChainPoint, dramatically shortening startup time across runs.
   */
 final case class BotConfig(
-    botNetwork: BotNetwork,
+    cardanoNet: CardanoNet,
     blockfrostApiKey: String,
     pythPolicyIdHex: String,
     pythKey: String,
@@ -59,13 +48,15 @@ final case class BotConfig(
     pythChannel: PythChannel,
     priceMaxAgeSeconds: Long,
     chainStoreDir: Option[String]
-) {
-    /** Back-compat alias used by the rest of the bot. */
-    def network: ScalusNetwork = botNetwork.scalusNetwork
-    def networkMagic: Long     = botNetwork.magic
-}
+)
 
 object BotConfig {
+
+    /** Per-network default Cardano relay. Overridable via PYTHACOIN_RELAY_HOST. */
+    private def defaultRelayHost(net: CardanoNet): String = net match
+        case CardanoNet.Mainnet => "backbone.cardano.iog.io"
+        case CardanoNet.Preprod => "preprod-node.play.dev.cardano.org"
+        case CardanoNet.Preview => "preview-node.play.dev.cardano.org"
 
     /** Build a config from the standard env-var surface. Throws on missing required vars. */
     def fromEnv(): BotConfig = fromMap(sys.env)
@@ -78,27 +69,15 @@ object BotConfig {
         def req(name: String): String =
             env.getOrElse(name, sys.error(s"$name environment variable is not set"))
         def opt(name: String, default: String): String = env.getOrElse(name, default)
-        def optOpt(name: String): Option[String] = env.get(name).filter(_.nonEmpty)
 
-        val botNet = opt("PYTHACOIN_NETWORK", "preprod").toLowerCase match
-            case "mainnet" => BotNetwork.Mainnet
-            case "preprod" => BotNetwork.Preprod
-            case "preview" => BotNetwork.Preview
-            case other     => sys.error(s"Unsupported PYTHACOIN_NETWORK: $other (expected: mainnet|preprod|preview)")
-
-        // Default relay differs by network so a plain `PYTHACOIN_NETWORK=preview`
-        // doesn't try to connect to a preprod node.
-        val defaultRelay = botNet match
-            case BotNetwork.Mainnet => "backbone.cardano.iog.io"
-            case BotNetwork.Preprod => "preprod-node.play.dev.cardano.org"
-            case BotNetwork.Preview => "preview-node.play.dev.cardano.org"
+        val net = CardanoNet.parse(opt("PYTHACOIN_NETWORK", "preprod"))
 
         BotConfig(
-          botNetwork = botNet,
+          cardanoNet = net,
           blockfrostApiKey = req("BLOCKFROST_API_KEY"),
           pythPolicyIdHex = req("PYTH_POLICY_ID"),
           pythKey = req("PYTH_KEY"),
-          relayHost = opt("PYTHACOIN_RELAY_HOST", defaultRelay),
+          relayHost = opt("PYTHACOIN_RELAY_HOST", defaultRelayHost(net)),
           relayPort = opt("PYTHACOIN_RELAY_PORT", "3001").toInt,
           appId = opt("PYTHACOIN_APP_ID", "io.lantr.pythacoin.bot"),
           walletAddrBech32 = req("PYTHACOIN_BOT_ADDR"),
@@ -114,7 +93,7 @@ object BotConfig {
           // 60 s is well under the validator's ±600 s validity window so a tx
           // built from a still-fresh cached price is comfortably accepted.
           priceMaxAgeSeconds = opt("PYTHACOIN_PRICE_MAX_AGE_SECONDS", "60").toLong,
-          chainStoreDir = optOpt("PYTHACOIN_CHAIN_STORE_DIR")
+          chainStoreDir = env.get("PYTHACOIN_CHAIN_STORE_DIR").filter(_.nonEmpty)
         )
     }
 }

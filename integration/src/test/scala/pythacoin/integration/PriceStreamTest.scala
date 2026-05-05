@@ -1,8 +1,8 @@
 package pythacoin.integration
 
 import org.scalatest.funsuite.AnyFunSuite
-import pythacoin.{PythClient, given}
-import pythacoin.bot.{BotConfig, BotNetwork, PriceCache, PriceStream, PythChannel}
+import pythacoin.{CardanoNet, PythClient, given}
+import pythacoin.bot.{BotConfig, PriceCache, PriceStream, PythChannel}
 import scalus.cardano.ledger.ScriptHash
 
 import java.net.ServerSocket
@@ -30,7 +30,7 @@ class PriceStreamTest extends AnyFunSuite {
 
     /** Construct a config with only the fields PriceStream actually reads. */
     private def configFor(wsUrl: String): BotConfig = BotConfig(
-      botNetwork = BotNetwork.Preprod,
+      cardanoNet = CardanoNet.Preprod,
       blockfrostApiKey = "",
       pythPolicyIdHex = "00" * 28,
       pythKey = "test-token",

@@ -50,17 +50,12 @@ object BotApp extends OxApp {
       *   - the priceLoop poll that bridges the WS write-side to the read-side
       *     and doubles as the retry mechanism for Reseeded events that get
       *     dropped by the busy gate.
+      *
+      * `observe` runs once on the bot's launch thread before the chain-follower
+      * loop takes over; tests use it to capture the [[BotHandle]] for later
+      * polling. Must not block — it would stall the follower fork.
       */
-    def runWithConfig(cfg: BotConfig)(using Ox): Unit =
-        runWithConfig(cfg, _ => ())
-
-    /** Same as `runWithConfig`, but exposes a [[BotHandle]] to the caller
-      * before entering the chain-follower loop. Used by integration tests to
-      * observe the running bot (price cache, chain snapshot, evaluator
-      * counters) without scraping logs. The handle becomes stale once the
-      * supervised scope unwinds.
-      */
-    def runWithConfig(cfg: BotConfig, observe: BotHandle => Unit)(using Ox): Unit = {
+    def runWithConfig(cfg: BotConfig, observe: BotHandle => Unit = _ => ())(using Ox): Unit = {
         val ctx = useCloseableInScope(BotCtx(cfg))
         log.info(s"Starting\n${ctx.show}")
         val evaluator = new Evaluator(ctx)
@@ -71,20 +66,8 @@ object BotApp extends OxApp {
         fork {
             priceLoop(ctx, evaluator, () => follower.snapshot())
         }
-        observe(new RunningBotHandle(ctx, follower, evaluator))
+        observe(BotHandle(ctx, follower, evaluator))
         follower.runForever()
-    }
-
-    private final class RunningBotHandle(
-        val ctx: BotCtx,
-        follower: ChainFollower,
-        evaluator: Evaluator
-    ) extends BotHandle {
-        def chainSnapshot(): Option[Iterable[(Utxo, pythacoin.CdpInfo)]] = follower.snapshot()
-        def evaluationsRun: Long        = evaluator.evaluationsRun
-        def liquidationCandidates: Long = evaluator.liquidationCandidates
-        def liquidationsAttempted: Long = evaluator.liquidationsAttemptedCount
-        def liquidationsSubmitted: Long = evaluator.liquidationsSubmittedCount
     }
 
     /** Per-event dispatch: scope the work to what actually changed.

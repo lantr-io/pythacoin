@@ -5,7 +5,7 @@ import org.scalatest.funsuite.AnyFunSuite
 import org.slf4j.LoggerFactory
 import ox.supervised
 import pythacoin.bot.{BotApp, BotConfig, PythChannel}
-import scalus.cardano.address.Network as ScalusNetwork
+import pythacoin.CardanoNet
 
 import java.time.Instant
 import scala.io.Source
@@ -75,7 +75,7 @@ class PreprodLiquidationTest extends AnyFunSuite {
         // Dry-run is enforced regardless of env so this test never submits a
         // real tx, even if an operator forgets to set PYTHACOIN_DRY_RUN=true.
         val cfg = BotConfig.fromMap(env).copy(dryRun = true)
-        assert(cfg.network == ScalusNetwork.Testnet, "Test requires preprod (PYTHACOIN_NETWORK=preprod)")
+        assert(cfg.cardanoNet == CardanoNet.Preprod, "Test requires PYTHACOIN_NETWORK=preprod")
 
         log.info(s"Preprod smoke test: running for ${runDurationSeconds}s in dry-run")
         val started = Instant.now()

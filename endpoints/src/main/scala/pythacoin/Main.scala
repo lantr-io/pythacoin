@@ -1,7 +1,6 @@
 package pythacoin
 
 import com.monovore.decline.{Command, Opts}
-import scalus.cardano.address.Network
 
 enum Cmd:
     case Blueprint, Start
@@ -52,7 +51,7 @@ object Cli:
         val pythKey = System.getenv("PYTH_KEY") match
             case null => sys.error("PYTH_KEY environment variable is not set")
             case key  => key
-        val appCtx = AppCtx(Network.Testnet, blockfrostApiKey, pythPolicyId, pythKey)
+        val appCtx = AppCtx(CardanoNet.Preprod, blockfrostApiKey, pythPolicyId, pythKey)
         println("Starting the Pythacoin server...")
         Server(appCtx).start()
     }

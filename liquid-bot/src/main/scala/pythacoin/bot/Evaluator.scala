@@ -33,28 +33,16 @@ final class Evaluator(ctx: BotCtx) {
     // ~50 ms (one priceLoop tick) instead of waiting for the next push.
     private val viewDirty = new AtomicBoolean(false)
 
-    // Telemetry counters for the BotHandle observability surface. Tests assert
-    // on these to confirm the bot is making forward progress without scraping
-    // logs. Cheap to maintain (one volatile inc per call) and useful in prod
-    // diagnostics too.
-    private val evaluationsCounter      = new AtomicLong(0L)
-    private val candidatesCounter       = new AtomicLong(0L)
-    private val liquidationsAttempted   = new AtomicLong(0L)
-    private val liquidationsSubmitted   = new AtomicLong(0L)
+    // Telemetry counters surfaced via BotHandle.
+    private val evaluationsCounter    = new AtomicLong(0L)
+    private val candidatesCounter     = new AtomicLong(0L)
+    private val attemptsCounter       = new AtomicLong(0L)
+    private val submissionsCounter    = new AtomicLong(0L)
 
-    /** Number of evaluation passes that have actually run (i.e. weren't dropped
-      * by the busy gate or empty-cdps short-circuit). */
-    def evaluationsRun: Long = evaluationsCounter.get()
-
-    /** Total CDPs flagged as Liquidate by the decider (including dry-run hits). */
+    def evaluationsRun: Long        = evaluationsCounter.get()
     def liquidationCandidates: Long = candidatesCounter.get()
-
-    /** Total liquidation tx attempts (excluding dry-run; counts every call into
-      * `submitLiquidation`, regardless of outcome). */
-    def liquidationsAttemptedCount: Long = liquidationsAttempted.get()
-
-    /** Total liquidations that the chain accepted (per the submit response). */
-    def liquidationsSubmittedCount: Long = liquidationsSubmitted.get()
+    def liquidationsAttempted: Long = attemptsCounter.get()
+    def liquidationsSubmitted: Long = submissionsCounter.get()
 
     /** Mark the view dirty so the next priceLoop tick retries. */
     def markViewDirty(): Unit = viewDirty.set(true)
@@ -75,12 +63,10 @@ final class Evaluator(ctx: BotCtx) {
             log.debug("tryEvaluate: previous pass still running, skipping")
             return false
         try {
-            // tryEvaluate's bool tells the caller "I took the slot, don't
-            // mark dirty for retry"; that decision is independent of whether
-            // a price was actually available. The counter, in contrast, must
-            // only count passes that actually ran the decider — otherwise
-            // `evaluationsRun` reads as forward progress while we're really
-            // just spinning waiting for the first WS push.
+            // The Boolean tells the caller "I took the slot" so they don't
+            // re-mark dirty for retry. The counter, by contrast, must only
+            // tick when the decider actually ran — a stale-cache short-circuit
+            // is not forward progress.
             if evaluate(cdps) then evaluationsCounter.incrementAndGet()
             true
         }
@@ -133,7 +119,7 @@ final class Evaluator(ctx: BotCtx) {
         now: Instant,
         cachedPriceBytes: ByteString
     ): Unit = {
-        liquidationsAttempted.incrementAndGet()
+        attemptsCounter.incrementAndGet()
         try
             // Greedy-pick only the PUSD UTxOs we actually need to cover this
             // CDP's debt — passing the whole wallet bloats the tx on a
@@ -153,7 +139,7 @@ final class Evaluator(ctx: BotCtx) {
             val signed = ctx.wallet.sign(completed.transaction)
             ctx.streamProvider.submit(signed) match
                 case Right(hash) =>
-                    liquidationsSubmitted.incrementAndGet()
+                    submissionsCounter.incrementAndGet()
                     log.info(s"Liquidate submitted: txid=${hash.toHex} nft=${info.nftName}")
                 case Left(_: NodeSubmitError.UtxoNotAvailable) =>
                     // Could be the CDP itself (a competing liquidator won the race)

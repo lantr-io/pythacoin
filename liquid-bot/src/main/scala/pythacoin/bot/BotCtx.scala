@@ -9,7 +9,7 @@ import scalus.cardano.node.stream.engine.{ChainStore, KvChainStore}
 import scalus.cardano.node.stream.engine.kvstore.rocksdb.RocksDbKvStore
 import scalus.cardano.node.stream.ox.OxBlockchainStreamProvider
 
-import java.nio.file.{Files, Path, Paths}
+import java.nio.file.{Files, Paths}
 import scala.concurrent.ExecutionContext.Implicits.global
 
 /** Application context for the bot — analogue of `pythacoin.AppCtx`, but the
@@ -41,8 +41,8 @@ final class BotCtx(
       */
     def show: String =
         s"""Pythacoin bot context:
-           |  network            = ${cfg.botNetwork}
-           |  relay              = ${cfg.relayHost}:${cfg.relayPort} (magic ${cfg.networkMagic})
+           |  network            = ${cfg.cardanoNet}
+           |  relay              = ${cfg.relayHost}:${cfg.relayPort} (magic ${cfg.cardanoNet.magic})
            |  appId              = ${cfg.appId}
            |  cdp script address = ${BotCtx.renderAddress(scriptAddr)}
            |  cdp policy id      = ${policyId.toHex}
@@ -69,28 +69,23 @@ object BotCtx {
     def renderAddress(a: Address): String = a.encode.getOrElse(a.toHex)
 
     def apply(cfg: BotConfig): BotCtx = {
-        val net = cfg.botNetwork match
-            case BotNetwork.Mainnet => AppCtx.BlockfrostNet.Mainnet
-            case BotNetwork.Preprod => AppCtx.BlockfrostNet.Preprod
-            case BotNetwork.Preview => AppCtx.BlockfrostNet.Preview
-        val appCtx = AppCtx(net, cfg.blockfrostApiKey, cfg.pythPolicyIdHex, cfg.pythKey)
+        val appCtx = AppCtx(cfg.cardanoNet, cfg.blockfrostApiKey, cfg.pythPolicyIdHex, cfg.pythKey)
 
         val maybeChainStore: Option[ChainStore] = cfg.chainStoreDir.map { dir =>
-            val path: Path = Paths.get(dir)
-            val created = !Files.exists(path)
+            val path = Paths.get(dir)
+            // createDirectories is a no-op if the dir already exists; RocksDB
+            // will tell us whether it created fresh or recovered from the LOG.
             Files.createDirectories(path)
-            log.info(
-              s"ChainStore: ${if created then "created fresh" else "resuming from"} $path"
-            )
+            log.info(s"ChainStore: opening RocksDB at $path")
             new KvChainStore(RocksDbKvStore.open(path))
         }
 
         val streamCfg = StreamProviderConfig(
           appId = cfg.appId,
           cardanoInfo = appCtx.cardanoInfo,
-          chainSync = ChainSyncSource.N2N(cfg.relayHost, cfg.relayPort, cfg.networkMagic),
-          // Reuse the provider AppCtx already built (Blockfrost mainnet/preprod/preview
-          // or Yaci local), instead of opening a second Blockfrost connection.
+          chainSync = ChainSyncSource.N2N(cfg.relayHost, cfg.relayPort, cfg.cardanoNet.magic),
+          // Reuse the provider AppCtx already built (Blockfrost mainnet/preprod/preview)
+          // instead of opening a second Blockfrost connection.
           backup = BackupSource.Custom(appCtx.provider),
           chainStore = maybeChainStore
         )

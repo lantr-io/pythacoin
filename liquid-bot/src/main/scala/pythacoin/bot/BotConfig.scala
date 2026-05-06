@@ -18,6 +18,28 @@ object PythChannel {
     )
 }
 
+/** How to populate the chain store on first start.
+  *
+  *   - `None`    — empty store; sync from genesis via N2N (slow first run).
+  *   - `Mithril` — restore a Mithril-signed cardano-database snapshot via
+  *                 [[MithrilBootstrap]] before tailing. Requires
+  *                 `chainStoreDir`, `mithrilWorkDir`, and `mithrilGenesisVk`.
+  *
+  * Bootstrap runs only when the store is empty; a warm restart skips it
+  * regardless of mode so the knob is safe to leave on.
+  */
+enum BootstrapMode {
+    case None, Mithril
+}
+
+object BootstrapMode {
+    def parse(s: String): BootstrapMode = s.toLowerCase match
+        case "" | "none" => BootstrapMode.None
+        case "mithril"   => BootstrapMode.Mithril
+        case other       =>
+            sys.error(s"Unsupported PYTHACOIN_BOOTSTRAP: '$other'. Expected: none|mithril.")
+}
+
 /** Static configuration for the liquidation bot. Built once at startup from
   * environment variables / CLI flags; never mutated afterwards.
   *
@@ -47,7 +69,11 @@ final case class BotConfig(
     pythWsUrl: String,
     pythChannel: PythChannel,
     priceMaxAgeSeconds: Long,
-    chainStoreDir: Option[String]
+    chainStoreDir: Option[String],
+    bootstrap: BootstrapMode = BootstrapMode.None,
+    mithrilWorkDir: Option[String] = None,
+    mithrilGenesisVk: Option[String] = None,
+    mithrilAggregatorUrl: Option[String] = None
 )
 
 object BotConfig {
@@ -93,7 +119,11 @@ object BotConfig {
           // 60 s is well under the validator's ±600 s validity window so a tx
           // built from a still-fresh cached price is comfortably accepted.
           priceMaxAgeSeconds = opt("PYTHACOIN_PRICE_MAX_AGE_SECONDS", "60").toLong,
-          chainStoreDir = env.get("PYTHACOIN_CHAIN_STORE_DIR").filter(_.nonEmpty)
+          chainStoreDir = env.get("PYTHACOIN_CHAIN_STORE_DIR").filter(_.nonEmpty),
+          bootstrap = BootstrapMode.parse(opt("PYTHACOIN_BOOTSTRAP", "none")),
+          mithrilWorkDir = env.get("PYTHACOIN_MITHRIL_WORKDIR").filter(_.nonEmpty),
+          mithrilGenesisVk = env.get("PYTHACOIN_MITHRIL_GENESIS_VK").filter(_.nonEmpty),
+          mithrilAggregatorUrl = env.get("PYTHACOIN_MITHRIL_AGGREGATOR_URL").filter(_.nonEmpty)
         )
     }
 }

@@ -68,6 +68,11 @@ lazy val liquidBot = (project in file("liquid-bot"))
         "org.scalus" %% "scalus-streaming-ox" % scalusNodeVersion,
         "org.scalus" %% "scalus-cardano-network" % scalusNodeVersion,
         "org.scalus" %% "scalus-chain-store-rocksdb" % scalusNodeVersion,
+        // Mithril snapshot bootstrap for the embedded ChainStore. Pulls in
+        // chicory (WASM runtime for the upstream Mithril cert verifier),
+        // zstd-jni, bouncycastle, commons-compress — opt-in via the
+        // `MithrilBootstrap` helper; not on the cold-start hot path.
+        "org.scalus" %% "scalus-chain-store-mithril" % scalusNodeVersion,
         "com.monovore" %% "decline" % "2.6.1",
         "org.slf4j" % "slf4j-simple" % "2.0.17"
       ) ++ scalatestDeps

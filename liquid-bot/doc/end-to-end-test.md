@@ -24,11 +24,13 @@ already in the codebase; the test class itself is the next deliverable.
    Blockfrost / Pyth credentials are present.
 2. **Resolve chain-store path** from `PYTHACOIN_CHAIN_STORE_DIR`
    (recommend `./.cache/chain-store-${network}`).
-   - Directory missing → bot creates it, syncs from genesis (slow first
-     run; ~minutes once a Mithril snapshot bootstrap is wired).
+   - Directory missing → bot creates it. With `PYTHACOIN_BOOTSTRAP=mithril`,
+     the empty store is populated from a Mithril-signed cardano-database
+     snapshot before the live N2N tail starts (minutes for download +
+     verify, then catch-up). Without bootstrap, syncs from genesis (slow).
    - Directory present → bot resumes from the last persisted ChainPoint
-     (fast: seconds). This is the "restore-if-absent" semantic the user
-     asked for.
+     (fast: seconds). The bootstrap knob is a no-op on warm restart, so
+     leaving it on across runs is safe.
 3. **Ensure a deterministic test CDP exists.** The test uses an NFT name
    derived from a stable prefix + the wallet's payment-key-hash so two
    developers running concurrently don't collide.
@@ -67,6 +69,10 @@ sbt 'integration/testOnly *PreprodEndToEnd* -- -n pythacoin.integration.PreprodT
 | `PYTH_KEY` | Pyth Lazer auth token. |
 | `PYTHACOIN_BOT_ADDR` / `PYTHACOIN_BOT_KEY` / `PYTHACOIN_BOT_VKEY` | Test wallet. Must hold a few ADA for fees and (if cleanup is enabled) ≥ debt PUSD. |
 | `PYTHACOIN_CHAIN_STORE_DIR` | Persistent RocksDB path. Auto-created when missing. |
+| `PYTHACOIN_BOOTSTRAP` | `none` (default) or `mithril`. Mithril restores a signed snapshot into the chain store on first run. |
+| `PYTHACOIN_MITHRIL_WORKDIR` | Required when bootstrap=mithril. Persistent dir for the multi-GB Mithril artefact (resumable across restarts). |
+| `PYTHACOIN_MITHRIL_GENESIS_VK` | Required when bootstrap=mithril. Per-network genesis verification key from https://mithril.network/doc/manual/getting-started/network-configurations. |
+| `PYTHACOIN_MITHRIL_AGGREGATOR_URL` | Optional override of the per-network Mithril aggregator URL. |
 | `PYTHACOIN_E2E_DURATION_SECONDS` | Run window, default 180. |
 | `PYTHACOIN_E2E_CLEANUP` | If `true`, close the test CDP on success. |
 
@@ -87,13 +93,14 @@ sbt 'integration/testOnly *PreprodEndToEnd* -- -n pythacoin.integration.PreprodT
 - `Evaluator` updates atomic counters per pass / candidate / attempt /
   submission so the test asserts on forward progress without scraping
   logs.
+- `MithrilBootstrap` (in `liquid-bot/.../bot/MithrilBootstrap.scala`)
+  wraps `scalus-chain-store-mithril`'s `ChainStoreRestorer` with the
+  per-network aggregator URLs. `BotCtx.apply` runs it before the
+  stream provider opens, gated on bootstrap mode + empty-store check
+  (`ChainStore.tip.isEmpty`); a warm restart is a no-op.
 
 ## Out of scope (for later)
 
-- **Mithril-bootstrapped chain store.** Ramps the first-run sync from
-  full-history (long) to snapshot-restore + tail (short). Requires
-  `scalus-chain-store-mithril` integration; an opt-in
-  `PYTHACOIN_BOOTSTRAP=mithril` knob would be the natural shape.
 - **Forced-liquidation drill.** `dryRun=false` against a CDP whose
   `minLtvBps` we've lowered for the test, so the bot actually submits
   a liquidation against preprod. Useful as a separate, longer-running

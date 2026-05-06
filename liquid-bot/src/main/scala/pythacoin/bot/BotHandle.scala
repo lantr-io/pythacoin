@@ -1,7 +1,7 @@
 package pythacoin.bot
 
 import pythacoin.CdpInfo
-import scalus.cardano.ledger.Utxo
+import scalus.cardano.ledger.{TransactionInput, Utxo}
 
 /** Observability handle into a running bot — used by integration tests instead
   * of scraping logs. Valid only for the lifetime of the supervised scope that
@@ -17,10 +17,12 @@ final class BotHandle private[bot] (
     follower: ChainFollower,
     evaluator: Evaluator
 ) {
-    /** Atomic snapshot of the chain follower's CDP view, or `None` while a
-      * rollback's reseed hasn't yet succeeded.
+    /** Atomic snapshot of the chain follower's CDP view, keyed by the CDP
+      * UTxO's [[TransactionInput]]. Returns `None` while a rollback's reseed
+      * hasn't yet succeeded.
       */
-    def chainSnapshot(): Option[Iterable[(Utxo, CdpInfo)]] = follower.snapshot()
+    def chainSnapshot(): Option[collection.Map[TransactionInput, (Utxo, CdpInfo)]] =
+        follower.snapshot()
 
     /** Decision passes that actually ran (cache available, slot acquired). */
     def evaluationsRun: Long = evaluator.evaluationsRun

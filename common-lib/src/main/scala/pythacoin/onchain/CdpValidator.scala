@@ -1,6 +1,7 @@
 package pythacoin.onchain
 
 import scalus.*
+import scalus.compiler.Compile
 import scalus.cardano.onchain.plutus.prelude.*
 import scalus.cardano.onchain.plutus.v1.Credential.{PubKeyCredential, ScriptCredential}
 import scalus.cardano.onchain.plutus.v1.TokenName

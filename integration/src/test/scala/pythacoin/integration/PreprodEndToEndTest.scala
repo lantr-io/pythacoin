@@ -120,7 +120,7 @@ class PreprodEndToEndTest extends AnyFunSuite {
 
             waitForCond(deadlineMs, s"chain snapshot contains test CDP $nftHex") {
                 handle.chainSnapshot().exists(view =>
-                    view.exists { case (_, info) => info.nftName == nftHex }
+                    view.values.exists { case (_, info) => info.nftName == nftHex }
                 )
             }
             waitForCond(deadlineMs, "price cache populated by Pyth Lazer WS") {

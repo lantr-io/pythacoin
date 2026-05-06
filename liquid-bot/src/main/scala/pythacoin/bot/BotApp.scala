@@ -4,7 +4,7 @@ import com.monovore.decline.{Command, Opts}
 import org.slf4j.LoggerFactory
 import ox.{ExitCode, Ox, OxApp, fork, useCloseableInScope}
 import pythacoin.CdpInfo
-import scalus.cardano.ledger.Utxo
+import scalus.cardano.ledger.{TransactionInput, Utxo}
 
 import java.time.Instant
 
@@ -97,7 +97,7 @@ object BotApp extends OxApp {
     private def priceLoop(
         ctx: BotCtx,
         evaluator: Evaluator,
-        snapshot: () => Option[Iterable[(Utxo, CdpInfo)]]
+        snapshot: () => Option[collection.Map[TransactionInput, (Utxo, CdpInfo)]]
     ): Unit = {
         var lastFetchedAt: Option[Instant] = None
         while !Thread.currentThread.isInterrupted do
@@ -109,7 +109,7 @@ object BotApp extends OxApp {
                     case Some(view) =>
                         val newPrice = !lastFetchedAt.contains(c.fetchedAt)
                         val newView  = evaluator.isViewDirty
-                        if (newPrice || newView) && evaluator.tryEvaluate(view) then
+                        if (newPrice || newView) && evaluator.tryEvaluate(view.values) then
                             lastFetchedAt = Some(c.fetchedAt)
                             if newView then evaluator.clearViewDirty()
             }

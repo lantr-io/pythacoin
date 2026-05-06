@@ -3,8 +3,9 @@ package pythacoin.bot
 import org.slf4j.LoggerFactory
 import pythacoin.CdpInfo
 import scalus.cardano.ledger.{TransactionInput, Utxo, Utxos}
-import scalus.cardano.node.{UtxoQuery, UtxoSource}
+import scalus.cardano.node.UtxoQueryMacros.buildQuery
 import scalus.cardano.node.stream.*
+import scalus.cardano.node.stream.UtxoEventQueryMacros.buildEventQuery
 import scalus.utils.Hex.toHex
 
 import scala.collection.concurrent.TrieMap
@@ -65,14 +66,14 @@ final class ChainFollower(ctx: BotCtx, onChange: CdpEvent => Unit) {
       * `TrieMap.readOnlySnapshot()` is O(1) and safe to call concurrently
       * with `handleEvent`.
       */
-    def snapshot(): Option[Iterable[(Utxo, CdpInfo)]] =
-        if viewValid.get() then Some(cdpView.readOnlySnapshot().values) else None
+    def snapshot(): Option[collection.Map[TransactionInput, (Utxo, CdpInfo)]] =
+        if viewValid.get() then Some(cdpView.readOnlySnapshot()) else None
 
     /** Subscribe to UTxO events at the CDP script address and run the callback
       * loop until the flow terminates. Blocks the calling (virtual) thread.
       */
     def runForever(): Unit = {
-        val query = UtxoEventQuery(UtxoQuery(UtxoSource.FromAddress(ctx.scriptAddr)))
+        val query = buildEventQuery((u, _) => u.output.address == ctx.scriptAddr)
         val flow = ctx.streamProvider.subscribeUtxoQuery(query, SubscriptionOptions())
         log.info(s"ChainFollower subscribed to ${BotCtx.renderAddress(ctx.scriptAddr)}")
         flow.runForeach(handleEvent)
@@ -121,7 +122,7 @@ final class ChainFollower(ctx: BotCtx, onChange: CdpEvent => Unit) {
       */
     private def reseed(): Boolean = {
         ctx.streamProvider
-            .findUtxos(UtxoQuery(UtxoSource.FromAddress(ctx.scriptAddr))) match
+            .findUtxos(buildQuery(_.output.address == ctx.scriptAddr)) match
             case Right(fresh: Utxos) =>
                 cdpView.clear()
                 for (input, output) <- fresh

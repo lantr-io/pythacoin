@@ -1,7 +1,7 @@
 package pythacoin
 
 import org.scalatest.funsuite.AnyFunSuite
-import pythacoin.integration.PreprodTag
+import pythacoin.integration.{EnvLoader, PreprodTag}
 import scalus.cardano.address.Network
 import scalus.cardano.ledger.*
 import scalus.cardano.node.BlockfrostProvider
@@ -14,27 +14,12 @@ import sttp.client4.*
 
 import scala.concurrent.ExecutionContext.Implicits.global
 import scala.concurrent.duration.*
-import scala.io.Source
 
 class PreprodCdpTest extends AnyFunSuite {
 
     given Ed25519Signer = JvmEd25519Signer
 
     private val apiBase = "http://localhost:8088"
-
-    private def loadEnv(): Map[String, String] = {
-        val envFile = Source.fromFile(".env")
-        try
-            envFile
-                .getLines()
-                .filter(_.contains("="))
-                .map { line =>
-                    val idx = line.indexOf('=')
-                    line.substring(0, idx).trim -> line.substring(idx + 1).trim
-                }
-                .toMap
-        finally envFile.close()
-    }
 
     private val backend = DefaultSyncBackend()
 
@@ -70,7 +55,7 @@ class PreprodCdpTest extends AnyFunSuite {
     }
 
     test("Alice opens CDP 100 ADA / 10 PUSD, then closes it", PreprodTag) {
-        val env = loadEnv()
+        val env = EnvLoader.load()
         val mnemonic = env("MNEMONIC")
         val blockfrostApiKey = env("BLOCKFROST_API_KEY")
 

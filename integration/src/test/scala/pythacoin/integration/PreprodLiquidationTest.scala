@@ -8,7 +8,6 @@ import pythacoin.bot.{BotApp, BotConfig, PythChannel}
 import pythacoin.CardanoNet
 
 import java.time.Instant
-import scala.io.Source
 
 /** Tag to gate preprod-against-real-Lazer runs out of the default test pass.
   * Run explicitly with:
@@ -50,27 +49,8 @@ class PreprodLiquidationTest extends AnyFunSuite {
     private val runDurationSeconds: Long =
         sys.env.getOrElse("PYTHACOIN_PREPROD_TEST_SECONDS", "90").toLong
 
-    /** Parse `.env` into a Map (sys.env wins on conflict) so operators don't
-      * have to export a dozen vars to their shell. Returns `sys.env` unchanged
-      * when no `.env` file is present.
-      */
-    private def loadEnv(): Map[String, String] = {
-        val f = new java.io.File(".env")
-        if !f.exists then return sys.env
-        val src = Source.fromFile(f)
-        try
-            val fromFile = src.getLines().filter(_.contains("=")).map { line =>
-                val idx = line.indexOf('=')
-                line.substring(0, idx).trim -> line.substring(idx + 1).trim
-            }.toMap
-            // Real env overrides .env so an operator can patch a single value
-            // on the command line without editing the file.
-            fromFile ++ sys.env
-        finally src.close()
-    }
-
     test("preprod smoke: bot starts, follows chain, receives WS prices (dry-run)", PreprodTag) {
-        val env = loadEnv()
+        val env = EnvLoader.load()
 
         // Dry-run is enforced regardless of env so this test never submits a
         // real tx, even if an operator forgets to set PYTHACOIN_DRY_RUN=true.

@@ -3,7 +3,7 @@ package pythacoin.integration
 import org.scalatest.funsuite.AnyFunSuite
 import org.slf4j.LoggerFactory
 import ox.{fork, supervised}
-import pythacoin.bot.{BotApp, BotConfig, BotHandle, Wallet}
+import pythacoin.bot.{BotApp, BotConfig, BotCtx, BotHandle, Wallet}
 import pythacoin.{AppCtx, CardanoNet}
 import scalus.cardano.address.{Address, ShelleyAddress, ShelleyPaymentPart}
 import scalus.cardano.ledger.{AddrKeyHash, AssetName}
@@ -13,7 +13,7 @@ import scalus.utils.await
 
 import java.time.Instant
 import scala.concurrent.duration.*
-import scala.io.Source
+import scala.concurrent.{Await, Promise}
 
 /** End-to-end smoke test against preprod or preview, exercising the full bot
   * stack with a real ChainStore-backed warm restart, real Pyth Lazer WS, and
@@ -60,7 +60,7 @@ class PreprodEndToEndTest extends AnyFunSuite {
     private val TestDebtMicroPusd      = 5_000_000L
 
     test("preprod e2e: warm-restart + real WS + deterministic CDP discovered", PreprodTag) {
-        val env = loadEnv()
+        val env = EnvLoader.load()
         val cfg = BotConfig.fromMap(env).copy(dryRun = true)
 
         require(
@@ -76,9 +76,8 @@ class PreprodEndToEndTest extends AnyFunSuite {
         val durationSeconds = env.getOrElse("PYTHACOIN_E2E_DURATION_SECONDS", "180").toLong
         val cleanup         = env.getOrElse("PYTHACOIN_E2E_CLEANUP", "false").toBoolean
 
-        // Build a side AppCtx + Wallet for setup tx-building. The bot will
-        // construct its own AppCtx internally; the two share Blockfrost +
-        // Pyth credentials so they see the same chain state.
+        // The bot constructs its own AppCtx internally; we need our own copy
+        // here because `ensureTestCdp` runs *before* the bot starts.
         val appCtx = AppCtx(cfg.cardanoNet, cfg.blockfrostApiKey, cfg.pythPolicyIdHex, cfg.pythKey)
         val wallet = Wallet.fromConfig(cfg)
         val pkh    = paymentKeyHash(wallet.address)
@@ -87,9 +86,9 @@ class PreprodEndToEndTest extends AnyFunSuite {
 
         log.info(
           s"E2E run: network=${cfg.cardanoNet} chainStore=${cfg.chainStoreDir.get} " +
-              s"wallet=${renderAddress(wallet.address)} testCdpNft=$nftHex"
+              s"wallet=${BotCtx.renderAddress(wallet.address)} testCdpNft=$nftHex"
         )
-        ensureTestCdp(appCtx, wallet, nftAsset, pkh)
+        ensureTestCdp(appCtx, wallet, nftAsset, nftHex, pkh)
 
         val started = Instant.now()
         runBotAndAssert(cfg, nftHex, durationSeconds)
@@ -101,21 +100,22 @@ class PreprodEndToEndTest extends AnyFunSuite {
     }
 
     /** Spin up the bot in a supervised scope, capture its [[BotHandle]] via
-      * the `observe` callback, poll the three forward-progress assertions,
-      * and exit the scope as soon as they all pass (or the deadline fires).
+      * the `observe` callback (one-shot, so a Promise rather than polling),
+      * poll the three forward-progress assertions, and exit the scope as
+      * soon as they all pass (or the deadline fires).
       *
       * Falling out of `supervised` cancels the bot fork; the fork's chain
       * follower is interrupt-aware, so this is the clean shutdown path.
       */
     private def runBotAndAssert(cfg: BotConfig, nftHex: String, durationSeconds: Long): Unit = {
-        @volatile var captured: Option[BotHandle] = None
+        val handlePromise = Promise[BotHandle]()
         supervised {
             fork {
-                BotApp.runWithConfig(cfg, observe = h => captured = Some(h))
+                BotApp.runWithConfig(cfg, observe = h => handlePromise.trySuccess(h))
             }
             val deadlineMs = System.currentTimeMillis() + durationSeconds * 1000
 
-            val handle = waitForOption(deadlineMs, "bot handle ready")(captured)
+            val handle = Await.result(handlePromise.future, durationSeconds.seconds)
             log.info("Bot handle captured; polling assertions")
 
             waitForCond(deadlineMs, s"chain snapshot contains test CDP $nftHex") {
@@ -139,18 +139,7 @@ class PreprodEndToEndTest extends AnyFunSuite {
         }
     }
 
-    /** Poll `body` until it returns `Some(value)`, then return that value.
-      * Times out at the deadline.
-      */
-    private def waitForOption[A](deadlineMs: Long, label: String)(body: => Option[A]): A = {
-        while System.currentTimeMillis() < deadlineMs do
-            body match
-                case Some(a) => return a
-                case None    => Thread.sleep(500L)
-        fail(s"Timed out waiting for: $label")
-    }
-
-    /** Poll `body` until it returns `true`. Times out at the deadline. */
+    /** Poll `body` until it returns `true`; fail the test on deadline. */
     private def waitForCond(deadlineMs: Long, label: String)(body: => Boolean): Unit = {
         while System.currentTimeMillis() < deadlineMs do
             if body then return
@@ -167,88 +156,66 @@ class PreprodEndToEndTest extends AnyFunSuite {
         appCtx: AppCtx,
         wallet: Wallet,
         nftAsset: AssetName,
+        nftHex: String,
         pkh: AddrKeyHash
-    ): Unit = {
-        val nftHex = nftAsset.bytes.toHex
-        appCtx.cdpQueries.findCdpUtxo(nftHex) match
-            case Some(_) =>
-                log.info(s"Test CDP $nftHex already on chain; reusing")
-            case None =>
-                log.info(
-                  s"Test CDP $nftHex not found; opening " +
-                      s"${TestCollateralLovelace / 1_000_000L} ADA / " +
-                      s"${TestDebtMicroPusd / 1_000_000L} PUSD"
-                )
-                val ownerPkh = PubKeyHash(ByteString.unsafeFromArray(pkh.bytes.toArray))
-                val builder = appCtx.cdpTransactions.openCdp(
-                  collateralLovelace = TestCollateralLovelace,
-                  debtPusd           = TestDebtMicroPusd,
-                  nftName            = nftAsset,
-                  ownerPkh           = ownerPkh,
-                  ownerAddr          = wallet.address,
-                  now                = Instant.now()
-                )
-                val completed = builder.complete(appCtx.provider, wallet.address).await(60.seconds)
-                val signed    = wallet.sign(completed.transaction)
-                appCtx.provider.submitAndPoll(signed).await(180.seconds) match
-                    case Right(hash) =>
-                        log.info(s"Open CDP confirmed: ${hash.toHex}")
-                        // Blockfrost UTxO index lags submission by a few
-                        // blocks; give it a beat before the bot starts
-                        // querying. 20s comfortably covers preprod's ~20s
-                        // block time plus index propagation.
-                        Thread.sleep(20_000L)
-                    case Left(err) =>
-                        fail(s"Failed to open test CDP: $err")
-    }
+    ): Unit = appCtx.cdpQueries.findCdpUtxo(nftHex) match
+        case Some(_) =>
+            log.info(s"Test CDP $nftHex already on chain; reusing")
+        case None =>
+            log.info(
+              s"Test CDP $nftHex not found; opening " +
+                  s"${TestCollateralLovelace / 1_000_000L} ADA / " +
+                  s"${TestDebtMicroPusd / 1_000_000L} PUSD"
+            )
+            val builder = appCtx.cdpTransactions.openCdp(
+              collateralLovelace = TestCollateralLovelace,
+              debtPusd           = TestDebtMicroPusd,
+              nftName            = nftAsset,
+              ownerPkh           = PubKeyHash(pkh: ByteString),
+              ownerAddr          = wallet.address,
+              now                = Instant.now()
+            )
+            val signed = wallet.sign(
+              builder.complete(appCtx.provider, wallet.address).await(60.seconds).transaction
+            )
+            appCtx.provider.submitAndPoll(signed).await(180.seconds) match
+                case Right(hash) =>
+                    log.info(s"Open CDP confirmed: ${hash.toHex}")
+                    // Blockfrost UTxO index lags submission by a few blocks;
+                    // 20s comfortably covers preprod's ~20s block time plus
+                    // index propagation before the bot starts querying.
+                    Thread.sleep(20_000L)
+                case Left(err) => fail(s"Failed to open test CDP: $err")
 
-    /** Best-effort cleanup: close the test CDP so the wallet recovers its
-      * collateral. Failures are logged but don't fail the test — the
-      * primary assertions already passed.
+    /** Best-effort cleanup. Failures log-and-continue rather than failing
+      * the test — the primary assertions already passed.
       */
-    private def closeTestCdp(appCtx: AppCtx, wallet: Wallet, nftHex: String): Unit = {
+    private def closeTestCdp(appCtx: AppCtx, wallet: Wallet, nftHex: String): Unit =
         appCtx.cdpQueries.findCdpUtxo(nftHex) match
             case None =>
                 log.warn(s"Cleanup requested but test CDP $nftHex not found; skipping")
             case Some(utxo) =>
-                val builder = appCtx.cdpTransactions.closeCdp(utxo, wallet.address, Instant.now())
-                val completed = builder.complete(appCtx.provider, wallet.address).await(60.seconds)
-                val signed    = wallet.sign(completed.transaction)
+                val signed = wallet.sign(
+                  appCtx.cdpTransactions
+                      .closeCdp(utxo, wallet.address, Instant.now())
+                      .complete(appCtx.provider, wallet.address)
+                      .await(60.seconds)
+                      .transaction
+                )
                 appCtx.provider.submitAndPoll(signed).await(180.seconds) match
                     case Right(hash) => log.info(s"Test CDP $nftHex closed: ${hash.toHex}")
                     case Left(err)   => log.warn(s"Cleanup close failed (non-fatal): $err")
-    }
 
     /** Stable per-wallet NFT name: 4-byte ASCII prefix + 28-byte payment-key-hash.
       * Two operators running concurrently can't collide because the PKH is
       * unique, and the same wallet finds the same CDP on every run.
       */
     private def deterministicNft(pkh: AddrKeyHash): AssetName =
-        AssetName(ByteString.unsafeFromArray(NftPrefix ++ pkh.bytes.toArray))
+        AssetName(ByteString.unsafeFromArray(NftPrefix ++ pkh.bytes))
 
     private def paymentKeyHash(addr: Address): AddrKeyHash = addr match
-        case s: ShelleyAddress => s.payment match
-            case ShelleyPaymentPart.Key(h) => h
-            case ShelleyPaymentPart.Script(_) =>
-                sys.error("Wallet address must be a payment-key-hash, not a script")
+        case ShelleyAddress(_, ShelleyPaymentPart.Key(h), _) => h
+        case ShelleyAddress(_, ShelleyPaymentPart.Script(_), _) =>
+            sys.error("Wallet address must be a payment-key-hash, not a script")
         case _ => sys.error(s"Wallet address must be a Shelley address; got $addr")
-
-    private def renderAddress(a: Address): String = a.encode.getOrElse(a.toHex)
-
-    /** Parse `.env` into a Map (sys.env wins on conflict) so operators don't
-      * have to export a dozen vars. Returns `sys.env` unchanged if no `.env`
-      * is present. Mirrors the helper in `PreprodLiquidationTest`.
-      */
-    private def loadEnv(): Map[String, String] = {
-        val f = new java.io.File(".env")
-        if !f.exists then return sys.env
-        val src = Source.fromFile(f)
-        try
-            val fromFile = src.getLines().filter(_.contains("=")).map { line =>
-                val idx = line.indexOf('=')
-                line.substring(0, idx).trim -> line.substring(idx + 1).trim
-            }.toMap
-            fromFile ++ sys.env
-        finally src.close()
-    }
 }

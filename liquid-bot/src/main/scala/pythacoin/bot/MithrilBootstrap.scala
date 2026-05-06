@@ -26,8 +26,6 @@ import scala.concurrent.{ExecutionContext, Future}
   */
 object MithrilBootstrap {
 
-    final case class Endpoints(aggregatorUrl: String, genesisVerificationKey: String)
-
     /** Default Mithril aggregator URL for the given network. Sourced from
       * Mithril's published network configurations; verify against that
       * page when bumping `scalusNodeVersion`.
@@ -46,18 +44,18 @@ object MithrilBootstrap {
       * `${PYTHACOIN_CHAIN_STORE_DIR}/../mithril-cache-${network}`).
       *
       * The caller decides whether to bootstrap at all (typically: only
-      * when the chain store is empty); this helper just runs the restore
-      * unconditionally and returns the resulting tip.
+      * when the chain store is empty) and resolves the aggregator URL
+      * (via [[defaultAggregatorUrl]] or an env override); this helper
+      * just runs the restore and returns the resulting tip.
       */
     def restore(
-        net: CardanoNet,
+        aggregatorUrl: String,
         genesisVerificationKey: String,
         store: ChainStore & ChainStoreUtxoSet,
-        workDir: Path,
-        aggregatorUrlOverride: Option[String] = None
+        workDir: Path
     )(using ExecutionContext): Future[ChainTip] = {
         val source = SnapshotSource.Mithril(
-          aggregatorUrl = aggregatorUrlOverride.getOrElse(defaultAggregatorUrl(net)),
+          aggregatorUrl = aggregatorUrl,
           genesisVerificationKey = genesisVerificationKey,
           workDir = workDir
         )

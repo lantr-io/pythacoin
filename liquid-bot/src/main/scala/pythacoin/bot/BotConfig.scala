@@ -34,9 +34,9 @@ enum BootstrapMode {
 
 object BootstrapMode {
     def parse(s: String): BootstrapMode = s.toLowerCase match
-        case "" | "none" => BootstrapMode.None
-        case "mithril"   => BootstrapMode.Mithril
-        case other       =>
+        case "none"    => BootstrapMode.None
+        case "mithril" => BootstrapMode.Mithril
+        case other     =>
             sys.error(s"Unsupported PYTHACOIN_BOOTSTRAP: '$other'. Expected: none|mithril.")
 }
 

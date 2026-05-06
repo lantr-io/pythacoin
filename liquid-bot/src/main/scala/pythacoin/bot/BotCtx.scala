@@ -71,13 +71,14 @@ object BotCtx {
       */
     def renderAddress(a: Address): String = a.encode.getOrElse(a.toHex)
 
+    private def resolveAggregatorUrl(cfg: BotConfig): String =
+        cfg.mithrilAggregatorUrl.getOrElse(MithrilBootstrap.defaultAggregatorUrl(cfg.cardanoNet))
+
     private def renderBootstrap(cfg: BotConfig): String = cfg.bootstrap match
-        case BootstrapMode.None    => "none"
+        case BootstrapMode.None => "none"
         case BootstrapMode.Mithril =>
-            val agg = cfg.mithrilAggregatorUrl.getOrElse(
-              MithrilBootstrap.defaultAggregatorUrl(cfg.cardanoNet)
-            )
-            s"mithril (aggregator=$agg, workDir=${cfg.mithrilWorkDir.getOrElse("?")})"
+            s"mithril (aggregator=${resolveAggregatorUrl(cfg)}, " +
+                s"workDir=${cfg.mithrilWorkDir.getOrElse("?")})"
 
     /** Run the configured bootstrap exactly once, when the chain store is
       * empty. A warm restart (tip already persisted) is a no-op regardless
@@ -119,9 +120,7 @@ object BotCtx {
         workDir: Path,
         genesisVk: String
     ): Unit = {
-        val aggregator = cfg.mithrilAggregatorUrl.getOrElse(
-          MithrilBootstrap.defaultAggregatorUrl(cfg.cardanoNet)
-        )
+        val aggregator = resolveAggregatorUrl(cfg)
         log.info(
           s"Mithril bootstrap: restoring ${cfg.cardanoNet} snapshot from $aggregator " +
               s"(workDir=$workDir)"
@@ -129,11 +128,10 @@ object BotCtx {
         val started = System.nanoTime()
         val tip = Await.result(
           MithrilBootstrap.restore(
-            net = cfg.cardanoNet,
+            aggregatorUrl = aggregator,
             genesisVerificationKey = genesisVk,
             store = store,
-            workDir = workDir,
-            aggregatorUrlOverride = cfg.mithrilAggregatorUrl
+            workDir = workDir
           ),
           Duration.Inf
         )
@@ -149,8 +147,6 @@ object BotCtx {
 
         val maybeChainStore: Option[ChainStore & ChainStoreUtxoSet] = cfg.chainStoreDir.map { dir =>
             val path = Paths.get(dir)
-            // createDirectories is a no-op if the dir already exists; RocksDB
-            // will tell us whether it created fresh or recovered from the LOG.
             Files.createDirectories(path)
             log.info(s"ChainStore: opening RocksDB at $path")
             new KvChainStore(RocksDbKvStore.open(path))

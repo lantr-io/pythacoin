@@ -1,8 +1,8 @@
-val scalusVersion = "0.17.0+9-7492763a-SNAPSHOT"
+val scalusVersion = "0.17.0+11-e1a753ab-SNAPSHOT"
 // The scalus-plugin module uses CrossVersion.full so its artifact is
 // `scalus-plugin_3.3.7` (full Scala version), referenced literally
 // rather than via `%%`. Snapshot version tracks scalusVersion.
-val scalusNodeVersion = "0.0.0+95-d9a8bac5+20260506-1220-SNAPSHOT"
+val scalusNodeVersion = "0.0.0+100-6cccfb50+20260506-1635-SNAPSHOT"
 
 ThisBuild / resolvers += Resolver.sonatypeCentralSnapshots
 

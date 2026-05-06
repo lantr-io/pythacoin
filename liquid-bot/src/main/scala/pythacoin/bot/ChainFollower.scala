@@ -3,7 +3,6 @@ package pythacoin.bot
 import org.slf4j.LoggerFactory
 import pythacoin.CdpInfo
 import scalus.cardano.ledger.{TransactionInput, Utxo, Utxos}
-import scalus.cardano.node.UtxoQueryMacros.buildQuery
 import scalus.cardano.node.stream.*
 import scalus.cardano.node.stream.UtxoEventQueryMacros.buildEventQuery
 import scalus.utils.Hex.toHex
@@ -123,8 +122,10 @@ final class ChainFollower(ctx: BotCtx, onChange: CdpEvent => Unit) {
       * on-chain event to rediscover).
       */
     private def reseed(): Boolean = {
-        ctx.streamProvider
-            .findUtxos(buildQuery(_.output.address == ctx.scriptAddr)) match
+        val result = ctx.streamProvider
+            .queryUtxos(_.output.address == ctx.scriptAddr)
+            .execute()
+        result match
             case Right(fresh: Utxos) =>
                 cdpView.clear()
                 for

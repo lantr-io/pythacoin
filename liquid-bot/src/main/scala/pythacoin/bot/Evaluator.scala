@@ -4,7 +4,6 @@ import org.slf4j.LoggerFactory
 import pythacoin.{Assets, CdpInfo}
 import scalus.cardano.ledger.{Utxo, Utxos}
 import scalus.cardano.node.NodeSubmitError
-import scalus.cardano.node.UtxoQueryMacros.buildQuery
 import scalus.uplc.builtin.ByteString
 import scalus.utils.Hex.toHex
 import scalus.utils.await
@@ -156,8 +155,10 @@ final class Evaluator(ctx: BotCtx) {
       * at the wallet, not the script address, so the tx-builder can't auto-select).
       */
     private def walletPusdUtxos(): Utxos = {
-        ctx.streamProvider
-            .findUtxos(buildQuery(_.output.address == ctx.wallet.address)) match
+        val result = ctx.streamProvider
+            .queryUtxos(_.output.address == ctx.wallet.address)
+            .execute()
+        result match
             case Right(found) =>
                 found.filter { case (_, output) =>
                     output.value.asset(ctx.policyId, Assets.Pusd) > 0

@@ -13,8 +13,10 @@ import scalus.uplc.builtin.{Builtins, ByteString, Data, FromData, ToData}
 import pythacoin.onchain.StrictLookups.*
 
 /** Inline datum stored at each CDP UTxO.
-  * @param owner the public key hash of the CDP owner (who can borrow/repay/close)
-  * @param debt  outstanding PUSD debt in lovelace-scale (1 PUSD = 1_000_000)
+  * @param owner
+  *   the public key hash of the CDP owner (who can borrow/repay/close)
+  * @param debt
+  *   outstanding PUSD debt in lovelace-scale (1 PUSD = 1_000_000)
   */
 case class CdpDatum(
     owner: PubKeyHash,
@@ -23,15 +25,16 @@ case class CdpDatum(
       ToData
 
 /** Script parameter baked into the compiled validator at deployment time.
-  * @param pythPolicyId the Pyth oracle deployment policy ID, used to locate Pyth State UTxO
+  * @param pythPolicyId
+  *   the Pyth oracle deployment policy ID, used to locate Pyth State UTxO
   */
 case class CdpParams(
     pythPolicyId: ByteString
 ) derives FromData,
       ToData
 
-/** Redeemer that selects which action the validator should enforce.
-  * The same enum is used for both the spend and mint handlers.
+/** Redeemer that selects which action the validator should enforce. The same enum is used for both
+  * the spend and mint handlers.
   */
 enum CdpAction derives FromData, ToData {
     case Open
@@ -44,13 +47,13 @@ enum CdpAction derives FromData, ToData {
 /** Protocol constants compiled into the on-chain script. */
 @Compile
 object CdpConsts {
-    val MAX_LTV: BigInt = 95       // 95% — maximum loan-to-value ratio for minting/borrowing
+    val MAX_LTV: BigInt = 95 // 95% — maximum loan-to-value ratio for minting/borrowing
     val LIQ_THRESHOLD: BigInt = 90 // 90% — LTV above which a CDP can be liquidated by anyone
-    val LTV_SCALE: BigInt = 100    // denominator for percentage arithmetic (100 = 100%)
+    val LTV_SCALE: BigInt = 100 // denominator for percentage arithmetic (100 = 100%)
     val PUSD_TOKEN_NAME: TokenName = utf8"PUSD"
     val PYTH_STATE_NAME: TokenName = utf8"Pyth State"
-    val ADA_USD_FEED_ID: BigInt = 16        // Pyth Lazer feed ID for ADA/USD
-    val ORACLE_SCALE: BigInt = 100_000_000  // price has 8 decimal places (exponent = -8)
+    val ADA_USD_FEED_ID: BigInt = 16 // Pyth Lazer feed ID for ADA/USD
+    val ORACLE_SCALE: BigInt = 100_000_000 // price has 8 decimal places (exponent = -8)
 }
 
 import pythacoin.onchain.CdpConsts.*
@@ -67,10 +70,10 @@ object CdpValidator extends DataParameterizedValidator {
     def leToUInt(bs: ByteString, offset: BigInt, size: BigInt): BigInt =
         Builtins.byteStringToInteger(false, bs.slice(offset, size))
 
-    val I16_SIGN: BigInt = BigInt(32768)           // 2^15 — sign threshold for I16
-    val I16_MOD: BigInt = BigInt(65536)             // 2^16 — modulus for I16 two's complement
-    val I64_SIGN: BigInt = BigInt("9223372036854775808")   // 2^63 — sign threshold for I64
-    val I64_MOD: BigInt = BigInt("18446744073709551616")   // 2^64 — modulus for I64 two's complement
+    val I16_SIGN: BigInt = BigInt(32768) // 2^15 — sign threshold for I16
+    val I16_MOD: BigInt = BigInt(65536) // 2^16 — modulus for I16 two's complement
+    val I64_SIGN: BigInt = BigInt("9223372036854775808") // 2^63 — sign threshold for I64
+    val I64_MOD: BigInt = BigInt("18446744073709551616") // 2^64 — modulus for I64 two's complement
 
     /** Parse signed 64-bit integer from LE bytes (two's complement). */
     def leToI64(bs: ByteString, offset: BigInt): BigInt = {
@@ -126,15 +129,13 @@ object CdpValidator extends DataParameterizedValidator {
 
     /** Get Pyth price from transaction.
       *
-      * 1. Find Pyth State UTxO in reference inputs 2. Extract withdraw_script hash from datum 3.
-      * Find withdrawal redeemer for that script 4. Parse price from first update
+      *   1. Find Pyth State UTxO in reference inputs 2. Extract withdraw_script hash from datum 3.
+      *      Find withdrawal redeemer for that script 4. Parse price from first update
       */
     def getPythPrice(tx: TxInfo, pythPolicyId: ByteString): BigInt = {
         // 1. Find Pyth State UTxO in reference inputs
         val pythState = tx.referenceInputs
-            .find(ref =>
-                ref.resolved.value.quantityOf(pythPolicyId, PYTH_STATE_NAME) === BigInt(1)
-            )
+            .find(ref => ref.resolved.value.quantityOf(pythPolicyId, PYTH_STATE_NAME) === BigInt(1))
             .getOrFail("Pyth State reference input not found")
 
         // 2. Extract withdraw_script hash from Pyth state datum (4th field)
@@ -177,7 +178,8 @@ object CdpValidator extends DataParameterizedValidator {
         case _                             => fail("Expected inline datum")
 
     /** Find the single continuing output at the script address and verify it holds the CDP NFT.
-      * Used by Borrow and Repay to ensure the CDP UTxO is preserved (not consumed without replacement).
+      * Used by Borrow and Repay to ensure the CDP UTxO is preserved (not consumed without
+      * replacement).
       */
     def getContinuingCdp(
         tx: TxInfo,

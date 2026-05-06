@@ -14,19 +14,19 @@ import scala.concurrent.Await
 import scala.concurrent.ExecutionContext.Implicits.global
 import scala.concurrent.duration.Duration
 
-/** Application context for the bot — analogue of `pythacoin.AppCtx`, but the
-  * provider is a `BlockchainStreamProvider` instead of a plain `BlockchainProvider`,
-  * and we carry a `Wallet` for autonomous signing.
+/** Application context for the bot — analogue of `pythacoin.AppCtx`, but the provider is a
+  * `BlockchainStreamProvider` instead of a plain `BlockchainProvider`, and we carry a `Wallet` for
+  * autonomous signing.
   *
   * Construction wires:
   *   - the embedded scalus-node engine via N2N to the configured relay,
-  *   - `appCtx.provider` as the snapshot/submit fallback (Blockfrost mainnet/preprod
-  *     or Yaci local — the choice lives in `AppCtx`, not here),
+  *   - `appCtx.provider` as the snapshot/submit fallback (Blockfrost mainnet/preprod or Yaci local
+  *     — the choice lives in `AppCtx`, not here),
   *   - the existing pythacoin `AppCtx` for tx-builders and Pyth client reuse.
   *
-  * The bot does not need its own copy of any pythacoin core logic — all
-  * tx-building goes through `appCtx.cdpTransactions`, all Pyth I/O through
-  * `appCtx.pythClient`, all CDP parsing through `appCtx.cdpQueries`.
+  * The bot does not need its own copy of any pythacoin core logic — all tx-building goes through
+  * `appCtx.cdpTransactions`, all Pyth I/O through `appCtx.pythClient`, all CDP parsing through
+  * `appCtx.cdpQueries`.
   */
 final class BotCtx(
     val cfg: BotConfig,
@@ -38,8 +38,8 @@ final class BotCtx(
     def scriptAddr: Address = appCtx.scriptAddr
     def policyId: ScriptHash = appCtx.policyId
 
-    /** Multi-line operator-facing summary of every knob in effect. Use at
-      * startup to make a misconfiguration obvious before the bot does any work.
+    /** Multi-line operator-facing summary of every knob in effect. Use at startup to make a
+      * misconfiguration obvious before the bot does any work.
       */
     def show: String =
         s"""Pythacoin bot context:
@@ -66,8 +66,8 @@ object BotCtx {
 
     private val log = LoggerFactory.getLogger(BotCtx.getClass)
 
-    /** Bech32 if the address has a hrp, otherwise hex. Shared by the startup
-      * banner and the chain-follower subscription log.
+    /** Bech32 if the address has a hrp, otherwise hex. Shared by the startup banner and the
+      * chain-follower subscription log.
       */
     def renderAddress(a: Address): String = a.encode.getOrElse(a.toHex)
 
@@ -80,14 +80,14 @@ object BotCtx {
             s"mithril (aggregator=${resolveAggregatorUrl(cfg)}, " +
                 s"workDir=${cfg.mithrilWorkDir.getOrElse("?")})"
 
-    /** Run the configured bootstrap exactly once, when the chain store is
-      * empty. A warm restart (tip already persisted) is a no-op regardless
-      * of mode, so leaving `PYTHACOIN_BOOTSTRAP=mithril` on across runs is
-      * safe — only the first run pays the download cost.
+    /** Run the configured bootstrap exactly once, when the chain store is empty. A warm restart
+      * (tip already persisted) is a no-op regardless of mode, so leaving
+      * `PYTHACOIN_BOOTSTRAP=mithril` on across runs is safe — only the first run pays the download
+      * cost.
       *
-      * Failures are surfaced rather than swallowed: if the operator asked
-      * for a Mithril snapshot and we can't deliver one, syncing from
-      * genesis silently is the wrong fallback (it could waste hours).
+      * Failures are surfaced rather than swallowed: if the operator asked for a Mithril snapshot
+      * and we can't deliver one, syncing from genesis silently is the wrong fallback (it could
+      * waste hours).
       */
     private def maybeBootstrap(
         cfg: BotConfig,
@@ -95,23 +95,31 @@ object BotCtx {
     ): Unit = cfg.bootstrap match
         case BootstrapMode.None => ()
         case BootstrapMode.Mithril =>
-            val s = store.getOrElse(sys.error(
-              "PYTHACOIN_BOOTSTRAP=mithril requires PYTHACOIN_CHAIN_STORE_DIR — there is " +
-                  "nowhere to restore into without a persistent store"
-            ))
+            val s = store.getOrElse(
+              sys.error(
+                "PYTHACOIN_BOOTSTRAP=mithril requires PYTHACOIN_CHAIN_STORE_DIR — there is " +
+                    "nowhere to restore into without a persistent store"
+              )
+            )
             if s.tip.isDefined then
                 log.info("Mithril bootstrap: chain store already has a tip; skipping restore")
             else
-                val workDir = Paths.get(cfg.mithrilWorkDir.getOrElse(sys.error(
-                  "PYTHACOIN_BOOTSTRAP=mithril requires PYTHACOIN_MITHRIL_WORKDIR — the " +
-                      "Mithril artefact is multi-GB and the work dir must persist for resumability"
-                )))
+                val workDir = Paths.get(
+                  cfg.mithrilWorkDir.getOrElse(
+                    sys.error(
+                      "PYTHACOIN_BOOTSTRAP=mithril requires PYTHACOIN_MITHRIL_WORKDIR — the " +
+                          "Mithril artefact is multi-GB and the work dir must persist for resumability"
+                    )
+                  )
+                )
                 Files.createDirectories(workDir)
-                val genesisVk = cfg.mithrilGenesisVk.getOrElse(sys.error(
-                  "PYTHACOIN_BOOTSTRAP=mithril requires PYTHACOIN_MITHRIL_GENESIS_VK — the " +
-                      "per-network genesis verification key is published at " +
-                      "https://mithril.network/doc/manual/getting-started/network-configurations"
-                ))
+                val genesisVk = cfg.mithrilGenesisVk.getOrElse(
+                  sys.error(
+                    "PYTHACOIN_BOOTSTRAP=mithril requires PYTHACOIN_MITHRIL_GENESIS_VK — the " +
+                        "per-network genesis verification key is published at " +
+                        "https://mithril.network/doc/manual/getting-started/network-configurations"
+                  )
+                )
                 runMithrilBootstrap(cfg, s, workDir, genesisVk)
 
     private def runMithrilBootstrap(

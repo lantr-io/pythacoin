@@ -2,31 +2,33 @@ package pythacoin.bot
 
 import pythacoin.CardanoNet
 
-/** Pyth Lazer push-channel rate. The wire-format string is what the WS
-  * subscribe message expects; an unknown env value fails fast at startup
-  * rather than at the first WS frame.
+/** Pyth Lazer push-channel rate. The wire-format string is what the WS subscribe message expects;
+  * an unknown env value fails fast at startup rather than at the first WS frame.
   */
 enum PythChannel(val wireName: String) {
     case FixedRate200ms extends PythChannel("fixed_rate@200ms")
-    case FixedRate50ms  extends PythChannel("fixed_rate@50ms")
-    case RealTime       extends PythChannel("real_time")
+    case FixedRate50ms extends PythChannel("fixed_rate@50ms")
+    case RealTime extends PythChannel("real_time")
 }
 
 object PythChannel {
-    def parse(s: String): PythChannel = values.find(_.wireName == s).getOrElse(
-      sys.error(s"Unsupported PYTHACOIN_PYTH_CHANNEL: '$s'. Expected one of ${values.map(_.wireName).mkString(", ")}.")
-    )
+    def parse(s: String): PythChannel = values
+        .find(_.wireName == s)
+        .getOrElse(
+          sys.error(
+            s"Unsupported PYTHACOIN_PYTH_CHANNEL: '$s'. Expected one of ${values.map(_.wireName).mkString(", ")}."
+          )
+        )
 }
 
 /** How to populate the chain store on first start.
   *
-  *   - `None`    — empty store; sync from genesis via N2N (slow first run).
-  *   - `Mithril` — restore a Mithril-signed cardano-database snapshot via
-  *                 [[MithrilBootstrap]] before tailing. Requires
-  *                 `chainStoreDir`, `mithrilWorkDir`, and `mithrilGenesisVk`.
+  *   - `None` — empty store; sync from genesis via N2N (slow first run).
+  *   - `Mithril` — restore a Mithril-signed cardano-database snapshot via [[MithrilBootstrap]]
+  *     before tailing. Requires `chainStoreDir`, `mithrilWorkDir`, and `mithrilGenesisVk`.
   *
-  * Bootstrap runs only when the store is empty; a warm restart skips it
-  * regardless of mode so the knob is safe to leave on.
+  * Bootstrap runs only when the store is empty; a warm restart skips it regardless of mode so the
+  * knob is safe to leave on.
   */
 enum BootstrapMode {
     case None, Mithril
@@ -36,21 +38,20 @@ object BootstrapMode {
     def parse(s: String): BootstrapMode = s.toLowerCase match
         case "none"    => BootstrapMode.None
         case "mithril" => BootstrapMode.Mithril
-        case other     =>
+        case other =>
             sys.error(s"Unsupported PYTHACOIN_BOOTSTRAP: '$other'. Expected: none|mithril.")
 }
 
-/** Static configuration for the liquidation bot. Built once at startup from
-  * environment variables / CLI flags; never mutated afterwards.
+/** Static configuration for the liquidation bot. Built once at startup from environment variables /
+  * CLI flags; never mutated afterwards.
   *
-  * The bot reads the chain via the embedded scalus-node (N2N to a relay, with
-  * Blockfrost as the fall-through backup for snapshot queries and submission)
-  * and signs liquidation transactions with `signingKey`.
+  * The bot reads the chain via the embedded scalus-node (N2N to a relay, with Blockfrost as the
+  * fall-through backup for snapshot queries and submission) and signs liquidation transactions with
+  * `signingKey`.
   *
-  * `chainStoreDir`, when set, points at a RocksDB directory used as the
-  * persistent ChainStore. If the directory doesn't exist it is created and
-  * the bot does a fresh sync; if it exists, the bot resumes from the last
-  * persisted ChainPoint, dramatically shortening startup time across runs.
+  * `chainStoreDir`, when set, points at a RocksDB directory used as the persistent ChainStore. If
+  * the directory doesn't exist it is created and the bot does a fresh sync; if it exists, the bot
+  * resumes from the last persisted ChainPoint, dramatically shortening startup time across runs.
   */
 final case class BotConfig(
     cardanoNet: CardanoNet,
@@ -87,9 +88,8 @@ object BotConfig {
     /** Build a config from the standard env-var surface. Throws on missing required vars. */
     def fromEnv(): BotConfig = fromMap(sys.env)
 
-    /** Build a config from an arbitrary key/value map. Tests use this to feed
-      * a parsed `.env` file (or any in-memory overrides) without touching the
-      * JVM's real environment.
+    /** Build a config from an arbitrary key/value map. Tests use this to feed a parsed `.env` file
+      * (or any in-memory overrides) without touching the JVM's real environment.
       */
     def fromMap(env: Map[String, String]): BotConfig = {
         def req(name: String): String =

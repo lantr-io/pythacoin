@@ -8,27 +8,24 @@ import scalus.cardano.node.stream.{ChainTip, SnapshotSource}
 import java.nio.file.Path
 import scala.concurrent.{ExecutionContext, Future}
 
-/** Wraps the scalus `ChainStoreRestorer` with the per-network Mithril
-  * aggregator endpoint, so the bot's bootstrap path needs to know only
-  * `BotConfig.cardanoNet`, the genesis verification key, and an on-disk
-  * work dir.
+/** Wraps the scalus `ChainStoreRestorer` with the per-network Mithril aggregator endpoint, so the
+  * bot's bootstrap path needs to know only `BotConfig.cardanoNet`, the genesis verification key,
+  * and an on-disk work dir.
   *
-  * The genesis verification key is intentionally not baked in — it's a
-  * per-network constant published at
-  * https://mithril.network/doc/manual/getting-started/network-configurations
-  * and shipping it inline would turn an upstream key rotation into a
-  * silent-update security bug. The caller (the future BotApp wiring)
-  * reads it from env (`PYTHACOIN_MITHRIL_GENESIS_VK`) and hands it in.
+  * The genesis verification key is intentionally not baked in — it's a per-network constant
+  * published at https://mithril.network/doc/manual/getting-started/network-configurations and
+  * shipping it inline would turn an upstream key rotation into a silent-update security bug. The
+  * caller (the future BotApp wiring) reads it from env (`PYTHACOIN_MITHRIL_GENESIS_VK`) and hands
+  * it in.
   *
-  * The aggregator URL has a sensible per-network default and an env
-  * override (`PYTHACOIN_MITHRIL_AGGREGATOR_URL`) for staging endpoints
-  * or for the day Mithril relocates a host.
+  * The aggregator URL has a sensible per-network default and an env override
+  * (`PYTHACOIN_MITHRIL_AGGREGATOR_URL`) for staging endpoints or for the day Mithril relocates a
+  * host.
   */
 object MithrilBootstrap {
 
-    /** Default Mithril aggregator URL for the given network. Sourced from
-      * Mithril's published network configurations; verify against that
-      * page when bumping `scalusNodeVersion`.
+    /** Default Mithril aggregator URL for the given network. Sourced from Mithril's published
+      * network configurations; verify against that page when bumping `scalusNodeVersion`.
       */
     def defaultAggregatorUrl(net: CardanoNet): String = net match
         case CardanoNet.Mainnet =>
@@ -38,15 +35,13 @@ object MithrilBootstrap {
         case CardanoNet.Preview =>
             "https://aggregator.pre-release-preview.api.mithril.network/aggregator"
 
-    /** Run a Mithril V2 snapshot restore into `store`. The restore is
-      * resumable across runs as long as `workDir` is preserved, so the
-      * caller should point this at a stable directory (for example,
-      * `${PYTHACOIN_CHAIN_STORE_DIR}/../mithril-cache-${network}`).
+    /** Run a Mithril V2 snapshot restore into `store`. The restore is resumable across runs as long
+      * as `workDir` is preserved, so the caller should point this at a stable directory (for
+      * example, `${PYTHACOIN_CHAIN_STORE_DIR}/../mithril-cache-${network}`).
       *
-      * The caller decides whether to bootstrap at all (typically: only
-      * when the chain store is empty) and resolves the aggregator URL
-      * (via [[defaultAggregatorUrl]] or an env override); this helper
-      * just runs the restore and returns the resulting tip.
+      * The caller decides whether to bootstrap at all (typically: only when the chain store is
+      * empty) and resolves the aggregator URL (via [[defaultAggregatorUrl]] or an env override);
+      * this helper just runs the restore and returns the resulting tip.
       */
     def restore(
         aggregatorUrl: String,
@@ -62,10 +57,9 @@ object MithrilBootstrap {
         ChainStoreRestorer(store).restore(source)
     }
 
-    /** Restore from an already-extracted cardano-database directory
-      * (`<dir>/immutable/`, `<dir>/ledger/<slot>/`). Skips download +
-      * cryptographic verification — useful for CI fixtures and tests
-      * that pre-stage a snapshot via the `mithril-client` CLI.
+    /** Restore from an already-extracted cardano-database directory (`<dir>/immutable/`,
+      * `<dir>/ledger/<slot>/`). Skips download + cryptographic verification — useful for CI
+      * fixtures and tests that pre-stage a snapshot via the `mithril-client` CLI.
       */
     def restoreDir(
         store: ChainStore & ChainStoreUtxoSet,

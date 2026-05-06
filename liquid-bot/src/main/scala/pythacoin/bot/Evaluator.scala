@@ -3,7 +3,8 @@ package pythacoin.bot
 import org.slf4j.LoggerFactory
 import pythacoin.{Assets, CdpInfo}
 import scalus.cardano.ledger.{Utxo, Utxos}
-import scalus.cardano.node.{NodeSubmitError, UtxoQuery, UtxoSource}
+import scalus.cardano.node.NodeSubmitError
+import scalus.cardano.node.UtxoQueryMacros.buildQuery
 import scalus.uplc.builtin.ByteString
 import scalus.utils.Hex.toHex
 import scalus.utils.await
@@ -13,14 +14,12 @@ import java.util.concurrent.atomic.{AtomicBoolean, AtomicLong}
 import scala.concurrent.ExecutionContext.Implicits.global
 import scala.concurrent.duration.*
 
-/** Owns the per-bot mutable state needed to coordinate the chain-event and
-  * price-push triggers: a busy gate and a "view changed during in-flight pass"
-  * retry flag. Exposes `tryEvaluate` for both triggers and `markViewDirty`
-  * for the rollback path.
+/** Owns the per-bot mutable state needed to coordinate the chain-event and price-push triggers: a
+  * busy gate and a "view changed during in-flight pass" retry flag. Exposes `tryEvaluate` for both
+  * triggers and `markViewDirty` for the rollback path.
   *
-  * Splitting this off `BotApp` removes the `(evalBusy, viewDirty, ctx, ...)`
-  * parameter sprawl that crept into the chain-event handler, the price loop,
-  * and the evaluator itself.
+  * Splitting this off `BotApp` removes the `(evalBusy, viewDirty, ctx, ...)` parameter sprawl that
+  * crept into the chain-event handler, the price loop, and the evaluator itself.
   */
 final class Evaluator(ctx: BotCtx) {
 
@@ -34,12 +33,12 @@ final class Evaluator(ctx: BotCtx) {
     private val viewDirty = new AtomicBoolean(false)
 
     // Telemetry counters surfaced via BotHandle.
-    private val evaluationsCounter    = new AtomicLong(0L)
-    private val candidatesCounter     = new AtomicLong(0L)
-    private val attemptsCounter       = new AtomicLong(0L)
-    private val submissionsCounter    = new AtomicLong(0L)
+    private val evaluationsCounter = new AtomicLong(0L)
+    private val candidatesCounter = new AtomicLong(0L)
+    private val attemptsCounter = new AtomicLong(0L)
+    private val submissionsCounter = new AtomicLong(0L)
 
-    def evaluationsRun: Long        = evaluationsCounter.get()
+    def evaluationsRun: Long = evaluationsCounter.get()
     def liquidationCandidates: Long = candidatesCounter.get()
     def liquidationsAttempted: Long = attemptsCounter.get()
     def liquidationsSubmitted: Long = submissionsCounter.get()
@@ -53,9 +52,8 @@ final class Evaluator(ctx: BotCtx) {
     /** Clear the dirty flag — call only after a successful re-evaluation. */
     def clearViewDirty(): Unit = viewDirty.set(false)
 
-    /** Skip-if-busy wrapper. Returns `true` if `evaluate` ran, `false` if
-      * the trigger was dropped. Callers can use the return value to keep a
-      * "retry next tick" flag set on a dropped pass.
+    /** Skip-if-busy wrapper. Returns `true` if `evaluate` ran, `false` if the trigger was dropped.
+      * Callers can use the return value to keep a "retry next tick" flag set on a dropped pass.
       */
     def tryEvaluate(cdps: Iterable[(Utxo, CdpInfo)]): Boolean = {
         if cdps.isEmpty then return false
@@ -69,18 +67,16 @@ final class Evaluator(ctx: BotCtx) {
             // is not forward progress.
             if evaluate(cdps) then evaluationsCounter.incrementAndGet()
             true
-        }
-        finally evalBusy.set(false)
+        } finally evalBusy.set(false)
     }
 
-    /** Run the decider over the given CDPs against the cached Pyth price and
-      * the bot's current PUSD balance. One cache read + one wallet UTxO query
-      * per call, regardless of how many CDPs are evaluated.
+    /** Run the decider over the given CDPs against the cached Pyth price and the bot's current PUSD
+      * balance. One cache read + one wallet UTxO query per call, regardless of how many CDPs are
+      * evaluated.
       *
-      * Returns `true` if the decider was actually invoked (i.e. a fresh
-      * cached price was available); `false` if we short-circuited because
-      * the cache was empty or stale. No REST fallback — a stale cache means
-      * we should not act.
+      * Returns `true` if the decider was actually invoked (i.e. a fresh cached price was
+      * available); `false` if we short-circuited because the cache was empty or stale. No REST
+      * fallback — a stale cache means we should not act.
       */
     private def evaluate(cdps: Iterable[(Utxo, CdpInfo)]): Boolean = {
         val now = Instant.now()
@@ -135,7 +131,8 @@ final class Evaluator(ctx: BotCtx) {
             // `complete` needs `BlockchainReader[Future]`; the Ox stream provider
             // is direct-style so we route the read path through `appCtx.provider`
             // (Blockfrost). Submission still goes through `streamProvider.submit`.
-            val completed = builder.complete(ctx.appCtx.provider, ctx.wallet.address).await(30.seconds)
+            val completed =
+                builder.complete(ctx.appCtx.provider, ctx.wallet.address).await(30.seconds)
             val signed = ctx.wallet.sign(completed.transaction)
             ctx.streamProvider.submit(signed) match
                 case Right(hash) =>
@@ -145,20 +142,22 @@ final class Evaluator(ctx: BotCtx) {
                     // Could be the CDP itself (a competing liquidator won the race)
                     // or one of our own PUSD UTxOs (spent by a prior liquidation
                     // already in flight). Both are benign retry-on-next-event cases.
-                    log.info(s"Liquidate ${info.nftName}: a required input UTxO is no longer available")
+                    log.info(
+                      s"Liquidate ${info.nftName}: a required input UTxO is no longer available"
+                    )
                 case Left(other) =>
                     log.warn(s"Liquidate submit rejected for ${info.nftName}: ${other.message}")
-        catch case e: Exception =>
-            log.error(s"Liquidate failed for ${info.nftName}: ${e.getMessage}", e)
+        catch
+            case e: Exception =>
+                log.error(s"Liquidate failed for ${info.nftName}: ${e.getMessage}", e)
     }
 
-    /** UTxOs at the bot wallet that hold PUSD. Used as the spend set for
-      * `liquidateCdp` (PUSD lives at the wallet, not the script address, so
-      * the tx-builder can't auto-select).
+    /** UTxOs at the bot wallet that hold PUSD. Used as the spend set for `liquidateCdp` (PUSD lives
+      * at the wallet, not the script address, so the tx-builder can't auto-select).
       */
     private def walletPusdUtxos(): Utxos = {
         ctx.streamProvider
-            .findUtxos(UtxoQuery(UtxoSource.FromAddress(ctx.wallet.address))) match
+            .findUtxos(buildQuery(_.output.address == ctx.wallet.address)) match
             case Right(found) =>
                 found.filter { case (_, output) =>
                     output.value.asset(ctx.policyId, Assets.Pusd) > 0

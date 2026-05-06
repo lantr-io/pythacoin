@@ -8,14 +8,15 @@ import scalus.uplc.builtin.ByteString
 
 import scala.annotation.tailrec
 
-/** On-chain utility extensions for strict (fail-fast) lookups on Plutus data structures.
-  * These are used by CdpValidator to assert expectations rather than returning Option,
-  * which keeps the on-chain code simpler and produces clear error messages on failure.
+/** On-chain utility extensions for strict (fail-fast) lookups on Plutus data structures. These are
+  * used by CdpValidator to assert expectations rather than returning Option, which keeps the
+  * on-chain code simpler and produces clear error messages on failure.
   */
 @Compile
 object StrictLookups {
 
     extension [A](self: List[A]) {
+
         /** Find first element matching predicate, or fail the script. */
         @tailrec
         def findOrFail(predicate: A => Boolean): A = self match
@@ -23,15 +24,17 @@ object StrictLookups {
             case List.Cons(head, tail) =>
                 if predicate(head) then head else tail.findOrFail(predicate)
 
-        /** Assert the list has exactly one element and return it, or fail with the given message. */
+        /** Assert the list has exactly one element and return it, or fail with the given message.
+          */
         def oneOrFail(message: String): A = self match
             case List.Cons(head, List.Nil) => head
             case _                         => fail(message)
     }
 
     extension [V](self: Value) {
-        /** Look up a token quantity, failing if the policy or token name is absent.
-          * Unlike `quantityOf` which returns 0 for missing entries, this asserts existence.
+
+        /** Look up a token quantity, failing if the policy or token name is absent. Unlike
+          * `quantityOf` which returns 0 for missing entries, this asserts existence.
           */
         def existingQuantityOf(policyId: PolicyId, tokenName: TokenName): BigInt = {
             self.toSortedMap.lookupOrFail(policyId).lookupOrFail(tokenName)
@@ -39,8 +42,9 @@ object StrictLookups {
     }
 
     extension [V](self: SortedMap[ByteString, V]) {
-        /** Look up a key in a sorted map, failing if not found.
-          * Exploits the sorted order to short-circuit early when key < current entry.
+
+        /** Look up a key in a sorted map, failing if not found. Exploits the sorted order to
+          * short-circuit early when key < current entry.
           */
         def lookupOrFail(key: ByteString): V = {
             @tailrec

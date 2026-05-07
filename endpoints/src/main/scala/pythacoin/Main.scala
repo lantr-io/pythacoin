@@ -8,13 +8,13 @@ enum Cmd:
 /** CLI entry point using decline for argument parsing.
   *
   * Two commands:
-  * - `blueprint`: prints the compiled script hash and size (uses a dummy Pyth policy ID)
-  * - `start`: launches the HTTP server on port 8088
+  *   - `blueprint`: prints the compiled script hash and size (uses a dummy Pyth policy ID)
+  *   - `start`: launches the HTTP server on port 8088
   *
   * The `start` command reads configuration from environment variables:
-  * - BLOCKFROST_API_KEY: Blockfrost project ID for chain queries and tx submission
-  * - PYTH_POLICY_ID: hex-encoded Pyth oracle deployment policy ID on the target network
-  * - PYTH_KEY: bearer token for the Pyth Lazer REST API
+  *   - BLOCKFROST_API_KEY: Blockfrost project ID for chain queries and tx submission
+  *   - PYTH_POLICY_ID: hex-encoded Pyth oracle deployment policy ID on the target network
+  *   - PYTH_KEY: bearer token for the Pyth Lazer REST API
   */
 object Cli:
     private val command = {

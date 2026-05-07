@@ -18,9 +18,13 @@ trait YaciDevKitTest extends YaciDevKit { self: Suite =>
         // randomised by Testcontainers — ask the container for the actual URL.
         val yaciStoreUrl = container.getYaciStoreApiUrl().stripSuffix("/")
         new AppCtx(
-          context.cardanoInfo, context.provider,
-          "", yaciStoreUrl,
-          pythPolicyId, "", cdpScript
+          context.cardanoInfo,
+          context.provider,
+          "",
+          yaciStoreUrl,
+          pythPolicyId,
+          "",
+          cdpScript
         )
     }
 }

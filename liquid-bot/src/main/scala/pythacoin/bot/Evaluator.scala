@@ -31,7 +31,7 @@ final class Evaluator(ctx: BotCtx) {
     // ~50 ms (one priceLoop tick) instead of waiting for the next push.
     private val viewDirty = new AtomicBoolean(false)
 
-    // Telemetry counters surfaced via BotHandle.
+    // Telemetry counters; tests read them directly off the running Bot.
     private val evaluationsCounter = new AtomicLong(0L)
     private val candidatesCounter = new AtomicLong(0L)
     private val attemptsCounter = new AtomicLong(0L)

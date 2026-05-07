@@ -14,19 +14,19 @@ import scalus.utils.await
 import scala.concurrent.ExecutionContext.Implicits.global
 import scala.concurrent.duration.*
 
-/** Bootstraps the Pyth State UTxO on Yaci-DevKit using `PlutusV3.alwaysOk` as
-  * BOTH the minting policy (so its hash is the test's `pythPolicyId`) and the
-  * "Pyth withdraw script" referenced from the State datum.
+/** Bootstraps the Pyth State UTxO on Yaci-DevKit using `PlutusV3.alwaysOk` as BOTH the minting
+  * policy (so its hash is the test's `pythPolicyId`) and the "Pyth withdraw script" referenced from
+  * the State datum.
   *
-  * The bot's `PythClient.fetchPythState` looks up the State by asset
-  * `(pythPolicyId, "Pyth State")` via Blockfrost, then reads the 4th datum
-  * field as the withdraw script hash. So the datum we ship is:
+  * The bot's `PythClient.fetchPythState` looks up the State by asset `(pythPolicyId, "Pyth State")`
+  * via Blockfrost, then reads the 4th datum field as the withdraw script hash. So the datum we ship
+  * is:
   *
-  *   `Constr 0 [(), [], [], <alwaysOkScriptHash bytes>]`
+  * `Constr 0 [(), [], [], <alwaysOkScriptHash bytes>]`
   *
-  * The alwaysOk script is attached as a `scriptRef` on the same output so
-  * Yaci's `/scripts/{hash}/cbor` endpoint serves it when the bot's
-  * `fetchScript` resolves the withdraw script.
+  * The alwaysOk script is attached as a `scriptRef` on the same output so Yaci's
+  * `/scripts/{hash}/cbor` endpoint serves it when the bot's `fetchScript` resolves the withdraw
+  * script.
   */
 object PythStateBootstrap {
 
@@ -44,8 +44,8 @@ object PythStateBootstrap {
     /** The hash that goes into the State datum's `withdraw_script` field. */
     val withdrawScriptHash: ScriptHash = alwaysOkScript.scriptHash
 
-    /** Build, sign, and submit the bootstrap tx. Returns the resulting State
-      * UTxO (input + output) so the caller can verify or reference it.
+    /** Build, sign, and submit the bootstrap tx. Returns the resulting State UTxO (input + output)
+      * so the caller can verify or reference it.
       */
     def bootstrap(
         provider: BlockchainProvider,
@@ -117,7 +117,9 @@ object PythStateBootstrap {
         while attempt < maxAttempts do
             provider.findUtxos(addr).await(15.seconds) match
                 case Right(utxos) =>
-                    utxos.find { case (_, out) => out.value.hasAsset(pythPolicyId, PythStateAssetName) } match
+                    utxos.find { case (_, out) =>
+                        out.value.hasAsset(pythPolicyId, PythStateAssetName)
+                    } match
                         case Some((input, _)) => return input
                         case None             => ()
                 case Left(_) => ()

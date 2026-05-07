@@ -4,21 +4,21 @@ import scalus.uplc.builtin.ByteString
 
 import java.util.Base64
 
-/** Shared parsing for Pyth Lazer's JSON envelope around the signed Solana
-  * payload. Both transports return the same shape:
+/** Shared parsing for Pyth Lazer's JSON envelope around the signed Solana payload. Both transports
+  * return the same shape:
   *
-  *   `{ ..., "solana": { "encoding": "base64" | "hex", "data": "<encoded>" }, ... }`
+  * `{ ..., "solana": { "encoding": "base64" | "hex", "data": "<encoded>" }, ... }`
   *
   * REST returns it directly; WS wraps it inside a `streamUpdated` message.
   *
-  * Hand-rolled scan instead of a JSON parser dep — the messages are small,
-  * the shape is stable, and the bot's WS hot path runs at up to 5×/sec.
+  * Hand-rolled scan instead of a JSON parser dep — the messages are small, the shape is stable, and
+  * the bot's WS hot path runs at up to 5×/sec.
   */
 object PythLazerEnvelope {
 
-    /** Pull the `solana.data` and `solana.encoding` fields out of a Pyth Lazer
-      * JSON message and return the decoded payload bytes. Returns `None` if
-      * the envelope isn't present (e.g. the WS subscribe-ack frame).
+    /** Pull the `solana.data` and `solana.encoding` fields out of a Pyth Lazer JSON message and
+      * return the decoded payload bytes. Returns `None` if the envelope isn't present (e.g. the WS
+      * subscribe-ack frame).
       */
     def decode(json: String): Option[ByteString] = {
         val solanaIdx = json.indexOf("\"solana\"")
@@ -31,8 +31,8 @@ object PythLazerEnvelope {
             case _        => ByteString.fromHex(data)
     }
 
-    /** Look up `"<key>":"<value>"` starting from `from`. Returns the raw
-      * (still-encoded) value, or `None` if absent / malformed.
+    /** Look up `"<key>":"<value>"` starting from `from`. Returns the raw (still-encoded) value, or
+      * `None` if absent / malformed.
       */
     private def extractField(json: String, from: Int, key: String): Option[String] = {
         val needle = "\"" + key + "\":\""

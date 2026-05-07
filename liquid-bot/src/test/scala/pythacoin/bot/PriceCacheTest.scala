@@ -8,7 +8,7 @@ import java.time.Instant
 class PriceCacheTest extends AnyFunSuite {
 
     private val Bytes = ByteString.fromArray(Array[Byte](1, 2, 3, 4))
-    private val Raw   = BigInt(75_230_000L)
+    private val Raw = BigInt(75_230_000L)
 
     test("returns None before anything is set") {
         val c = new PriceCache
@@ -42,7 +42,7 @@ class PriceCacheTest extends AnyFunSuite {
         val c = new PriceCache
         c.set(Bytes, Raw, Instant.ofEpochSecond(1000))
         val newBytes = ByteString.fromArray(Array[Byte](9, 9, 9))
-        val newRaw   = BigInt(80_000_000L)
+        val newRaw = BigInt(80_000_000L)
         c.set(newBytes, newRaw, Instant.ofEpochSecond(1100))
         val got = c.current(Instant.ofEpochSecond(1110), 60).get
         assert(got.priceRaw == newRaw)

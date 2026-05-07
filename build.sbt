@@ -95,7 +95,9 @@ lazy val integration = (project in file("integration"))
       // run doesn't need .env / Blockfrost credentials. Run them explicitly with
       //   sbt 'integration/testOnly *Preprod* -- -n pythacoin.integration.PreprodTag'
       Test / testOptions += Tests.Argument(
-        TestFrameworks.ScalaTest, "-l", "pythacoin.integration.PreprodTag"
+        TestFrameworks.ScalaTest,
+        "-l",
+        "pythacoin.integration.PreprodTag"
       ),
       libraryDependencies ++= Seq(
         "org.scalus" %% "scalus-testkit" % scalusVersion,

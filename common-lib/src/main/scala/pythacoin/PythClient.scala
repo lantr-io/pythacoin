@@ -15,14 +15,14 @@ import scala.concurrent.duration.*
 /** Client for interacting with the Pyth oracle on Cardano.
   *
   * Handles two concerns:
-  * 1. Fetching signed price updates from the Pyth Lazer REST API (off-chain data source)
-  * 2. Looking up the Pyth State UTxO and withdraw script on-chain via Blockfrost
+  *   1. Fetching signed price updates from the Pyth Lazer REST API (off-chain data source) 2.
+  *      Looking up the Pyth State UTxO and withdraw script on-chain via Blockfrost
   *
   * The Pyth integration pattern on Cardano uses a "withdrawal trick":
-  * - A Pyth State UTxO holds the withdraw script hash in its datum
-  * - Transactions include the price update as a withdrawal redeemer
-  * - The Pyth withdraw script validates the signature on the price data
-  * - Our CDP validator reads the price from the withdrawal redeemer (no sig verification needed)
+  *   - A Pyth State UTxO holds the withdraw script hash in its datum
+  *   - Transactions include the price update as a withdrawal redeemer
+  *   - The Pyth withdraw script validates the signature on the price data
+  *   - Our CDP validator reads the price from the withdrawal redeemer (no sig verification needed)
   */
 class PythClient(
     pythPolicyId: ScriptHash,
@@ -49,8 +49,11 @@ class PythClient(
 
         response.body match
             case Right(body) =>
-                PythLazerEnvelope.decode(body)
-                    .getOrElse(throw RuntimeException(s"No solana payload in Pyth Lazer response: $body"))
+                PythLazerEnvelope
+                    .decode(body)
+                    .getOrElse(
+                      throw RuntimeException(s"No solana payload in Pyth Lazer response: $body")
+                    )
             case Left(error) =>
                 Log.error(s"Pyth Lazer API error: $error")
                 throw RuntimeException(s"Pyth Lazer API error: $error")
@@ -94,11 +97,13 @@ class PythClient(
                 Log.error(s"Failed to query Pyth State UTxOs: $error")
                 throw RuntimeException(s"Failed to query Pyth State UTxOs: $error")
 
-        utxos.collectFirst {
-            case (input, output) if output.value.hasAsset(pythPolicyId, pythStateName) =>
-                Log.info(s"Found Pyth State UTxO: ${input.transactionId.toHex}#${input.index}")
-                Utxo(input, output)
-        }.getOrElse(throw RuntimeException("Pyth State UTxO not found"))
+        utxos
+            .collectFirst {
+                case (input, output) if output.value.hasAsset(pythPolicyId, pythStateName) =>
+                    Log.info(s"Found Pyth State UTxO: ${input.transactionId.toHex}#${input.index}")
+                    Utxo(input, output)
+            }
+            .getOrElse(throw RuntimeException("Pyth State UTxO not found"))
     }
 
     /** Extract withdraw script hash from Pyth State inline datum (field 4). */
@@ -115,9 +120,9 @@ class PythClient(
 
     /** Fetch the Pyth withdraw PlutusScript from Blockfrost by script hash.
       *
-      * Blockfrost returns CBOR-wrapped script bytes. Sometimes the hash of the raw bytes
-      * doesn't match because Blockfrost double-wraps the CBOR. We try raw first, then
-      * unwrap one CBOR layer if the hash doesn't match.
+      * Blockfrost returns CBOR-wrapped script bytes. Sometimes the hash of the raw bytes doesn't
+      * match because Blockfrost double-wraps the CBOR. We try raw first, then unwrap one CBOR layer
+      * if the hash doesn't match.
       */
     def fetchScript(scriptHash: ScriptHash): PlutusScript = {
         val hashHex = scriptHash.toHex
@@ -141,8 +146,12 @@ class PythClient(
         val end = json.indexOf('"', start)
         val cborHex = json.substring(start, end)
         val rawBytes = ByteString.fromHex(cborHex)
-        Log.info(s"Script CBOR: hexLen=${cborHex.length}, bytes=${rawBytes.size}, expected serialised_size=2745")
-        Log.info(s"Script CBOR first 10 hex: ${cborHex.take(20)}, last 10 hex: ${cborHex.takeRight(20)}")
+        Log.info(
+          s"Script CBOR: hexLen=${cborHex.length}, bytes=${rawBytes.size}, expected serialised_size=2745"
+        )
+        Log.info(
+          s"Script CBOR first 10 hex: ${cborHex.take(20)}, last 10 hex: ${cborHex.takeRight(20)}"
+        )
 
         val script = Script.PlutusV3(rawBytes)
         if script.scriptHash.toHex == hashHex then
@@ -153,7 +162,9 @@ class PythClient(
             Log.info(s"Raw hash ${script.scriptHash.toHex} != $hashHex, trying CBOR unwrap...")
             val inner = scalus.serialization.cbor.Cbor.decode[Array[Byte]](rawBytes.bytes)
             val script2 = Script.PlutusV3(ByteString.unsafeFromArray(inner))
-            Log.info(s"After unwrap: hash=${script2.scriptHash.toHex}, expected=$hashHex, size=${inner.length} bytes")
+            Log.info(
+              s"After unwrap: hash=${script2.scriptHash.toHex}, expected=$hashHex, size=${inner.length} bytes"
+            )
             script2
     }
 
@@ -164,14 +175,14 @@ class PythClient(
         StakeAddress(network, StakePayload.Script(withdrawHash))
     }
 
-    /** Parse the raw 8-decimal integer ADA/USD price from Pyth update bytes —
-      * same encoding the on-chain `parsePythPrice` uses, so the bot's LTV check
-      * stays bit-for-bit consistent with the validator. Off-chain consumers
-      * that need a human-readable value should call `parsePrice` instead.
+    /** Parse the raw 8-decimal integer ADA/USD price from Pyth update bytes — same encoding the
+      * on-chain `parsePythPrice` uses, so the bot's LTV check stays bit-for-bit consistent with the
+      * validator. Off-chain consumers that need a human-readable value should call `parsePrice`
+      * instead.
       *
-      * Layout: Solana envelope `[4 magic][64 sig][32 key][2 payload_size]` (102
-      * bytes), payload header `[4 magic][8 timestamp][1 channel][1 feeds_len]`
-      * (14 bytes), feed `[4 feed_id][1 props_len][1 prop_id][8 price I64 LE]`.
+      * Layout: Solana envelope `[4 magic][64 sig][32 key][2 payload_size]` (102 bytes), payload
+      * header `[4 magic][8 timestamp][1 channel][1 feeds_len]` (14 bytes), feed `[4 feed_id][1
+      * props_len][1 prop_id][8 price I64 LE]`.
       */
     def parsePriceRaw(updateBytes: ByteString): Long = {
         import java.nio.{ByteBuffer, ByteOrder}

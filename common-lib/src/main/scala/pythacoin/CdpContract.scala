@@ -9,9 +9,9 @@ import pythacoin.onchain.{CdpParams, CdpValidator}
 
 /** Compiles the CDP validator into a Plutus V3 script.
   *
-  * The base script is compiled once (lazy) and then parameterized with the Pyth policy ID
-  * at deployment time via `apply()`. This produces a unique script hash per deployment
-  * that serves as both the minting policy ID (for PUSD + NFTs) and the script address.
+  * The base script is compiled once (lazy) and then parameterized with the Pyth policy ID at
+  * deployment time via `apply()`. This produces a unique script hash per deployment that serves as
+  * both the minting policy ID (for PUSD + NFTs) and the script address.
   */
 object CdpContract {
     given Options = Options.release

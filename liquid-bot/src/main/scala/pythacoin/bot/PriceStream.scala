@@ -9,20 +9,21 @@ import java.nio.ByteBuffer
 import java.time.{Duration as JDuration, Instant}
 import java.util.concurrent.{CompletionStage, CountDownLatch}
 
-/** Persistent WebSocket subscription to Pyth Lazer that pushes signed price
-  * updates into `cache`. Designed to live in a single forked Ox fiber alongside
-  * the chain follower; cancellation aborts the in-flight WS.
+/** Persistent WebSocket subscription to Pyth Lazer that pushes signed price updates into `cache`.
+  * Designed to live in a single forked Ox fiber alongside the chain follower; cancellation aborts
+  * the in-flight WS.
   *
-  *   - Subscribe message: `{"type":"subscribe", ..., "formats":["solana"], "jsonBinaryEncoding":"base64"}`
-  *   - Push message:      `{"type":"streamUpdated", "solana":{"encoding":"base64","data":"..."}}`
+  *   - Subscribe message: `{"type":"subscribe", ..., "formats":["solana"],
+  *     "jsonBinaryEncoding":"base64"}`
+  *   - Push message: `{"type":"streamUpdated", "solana":{"encoding":"base64","data":"..."}}`
   *
-  * The base64 `solana.data` is byte-identical to the REST `/v1/latest_price`
-  * payload, so `PythClient.parsePriceRaw` decodes it unchanged.
+  * The base64 `solana.data` is byte-identical to the REST `/v1/latest_price` payload, so
+  * `PythClient.parsePriceRaw` decodes it unchanged.
   *
-  * Reconnect is exponential-backoff (1s → 30s, capped). The cache ages out on
-  * its own (`PriceCache.current` checks wall-clock), so during a long
-  * disconnect `BotApp.tryEvaluate` cleanly skips passes — no separate "we are
-  * disconnected" flag is needed in the read path.
+  * Reconnect is exponential-backoff (1s → 30s, capped). The cache ages out on its own
+  * (`PriceCache.current` checks wall-clock), so during a long disconnect the bot's
+  * `Evaluator.tryEvaluate` cleanly skips passes — no separate "we are disconnected" flag is needed
+  * in the read path.
   */
 final class PriceStream(
     cfg: BotConfig,
@@ -42,15 +43,16 @@ final class PriceStream(
     // 1 MiB is two orders of magnitude above any plausible push.
     private val MaxPartialFrameBytes = 1_048_576
 
-    /** Connect → subscribe → drive the push loop forever. Returns only when
-      * the calling fiber is cancelled (interrupted). */
+    /** Connect → subscribe → drive the push loop forever. Returns only when the calling fiber is
+      * cancelled (interrupted).
+      */
     def run(): Unit = {
         var backoffMs = 1_000L
         while !Thread.currentThread.isInterrupted do
             try
                 val closed = openOnce()
-                closed.await()             // blocks until the WS closes or errors
-                backoffMs = 1_000L         // any successful session resets backoff
+                closed.await() // blocks until the WS closes or errors
+                backoffMs = 1_000L // any successful session resets backoff
             catch
                 case _: InterruptedException =>
                     Thread.currentThread.interrupt()
@@ -62,18 +64,20 @@ final class PriceStream(
             if Thread.currentThread.isInterrupted then return
             log.info(s"PriceStream reconnecting in ${backoffMs} ms")
             try Thread.sleep(backoffMs)
-            catch case _: InterruptedException =>
-                Thread.currentThread.interrupt(); return
+            catch
+                case _: InterruptedException =>
+                    Thread.currentThread.interrupt(); return
             backoffMs = math.min(backoffMs * 2, MaxBackoffMs)
     }
 
-    /** Open a single WS session, send the subscribe message, install the
-      * frame listener. Returns a latch that fires when the session ends.
+    /** Open a single WS session, send the subscribe message, install the frame listener. Returns a
+      * latch that fires when the session ends.
       */
     private def openOnce(): CountDownLatch = {
         val closedLatch = new CountDownLatch(1)
         val listener = new FrameListener(closedLatch)
-        val ws = httpClient.newWebSocketBuilder()
+        val ws = httpClient
+            .newWebSocketBuilder()
             .header("Authorization", s"Bearer ${cfg.pythKey}")
             .connectTimeout(JDuration.ofSeconds(15))
             .buildAsync(URI.create(cfg.pythWsUrl), listener)
@@ -91,11 +95,12 @@ final class PriceStream(
         val ws = activeWs
         if ws != null then
             activeWs = null
-            try ws.abort() catch case _: Throwable => ()
+            try ws.abort()
+            catch case _: Throwable => ()
     }
 
-    /** Java WebSocket listener. Single-threaded (the JDK dispatches frames
-      * sequentially per session), so the StringBuilder doesn't need locking.
+    /** Java WebSocket listener. Single-threaded (the JDK dispatches frames sequentially per
+      * session), so the StringBuilder doesn't need locking.
       */
     private final class FrameListener(closedLatch: CountDownLatch) extends WebSocket.Listener {
         private val partial = new StringBuilder
@@ -104,10 +109,16 @@ final class PriceStream(
             ws.request(1)
         }
 
-        override def onText(ws: WebSocket, data: CharSequence, last: Boolean): CompletionStage[?] = {
+        override def onText(
+            ws: WebSocket,
+            data: CharSequence,
+            last: Boolean
+        ): CompletionStage[?] = {
             partial.append(data)
             if partial.length > MaxPartialFrameBytes then
-                log.warn(s"PriceStream partial frame exceeded ${MaxPartialFrameBytes} bytes; dropping")
+                log.warn(
+                  s"PriceStream partial frame exceeded ${MaxPartialFrameBytes} bytes; dropping"
+                )
                 partial.setLength(0)
             else if last then
                 val msg = partial.toString
@@ -117,7 +128,11 @@ final class PriceStream(
             null
         }
 
-        override def onBinary(ws: WebSocket, data: ByteBuffer, last: Boolean): CompletionStage[?] = {
+        override def onBinary(
+            ws: WebSocket,
+            data: ByteBuffer,
+            last: Boolean
+        ): CompletionStage[?] = {
             // Subscribed with deliveryFormat=json, but be defensive against
             // server-side protocol changes — drop binary frames silently.
             ws.request(1)
@@ -136,8 +151,8 @@ final class PriceStream(
         }
     }
 
-    /** Parse one text frame. Drop any frame that isn't a `streamUpdated` push
-      * (the subscribe ack and any future control messages are ignored).
+    /** Parse one text frame. Drop any frame that isn't a `streamUpdated` push (the subscribe ack
+      * and any future control messages are ignored).
       */
     private def handleMessage(msg: String): Unit = {
         try
@@ -152,8 +167,9 @@ final class PriceStream(
                     cache.set(bytes, raw, Instant.now())
                 case None =>
                     log.debug(s"PriceStream streamUpdated without solana payload: $msg")
-        catch case e: Exception =>
-            // A malformed push must not kill the session — drop the frame and keep going.
-            log.warn(s"PriceStream message decode failed: ${e.getMessage}")
+        catch
+            case e: Exception =>
+                // A malformed push must not kill the session — drop the frame and keep going.
+                log.warn(s"PriceStream message decode failed: ${e.getMessage}")
     }
 }

@@ -16,23 +16,22 @@ import scala.concurrent.duration.*
 
 /** End-to-end hermetic test of the liquidation tx flow.
   *
-  * Scope: bootstraps a fake Pyth oracle on Yaci-DevKit (alwaysOk script doubles
-  * as both the Pyth minting policy and the withdraw script, with custom State
-  * UTxO), opens an under-collateralised CDP, then builds + submits a
-  * liquidation tx using cached price bytes from `FakeLazerServer.buildPayload`.
+  * Scope: bootstraps a fake Pyth oracle on Yaci-DevKit (alwaysOk script doubles as both the Pyth
+  * minting policy and the withdraw script, with custom State UTxO), opens an under-collateralised
+  * CDP, then builds + submits a liquidation tx using cached price bytes from
+  * `FakeLazerServer.buildPayload`.
   *
   * What this verifies:
-  *   - `CdpTransactions.liquidateCdp(... cachedPriceBytes = Some(...))` works
-  *     end-to-end against the chain.
-  *   - The on-chain `CdpValidator` accepts the liquidation when the cached
-  *     price drives LTV past 90%.
-  *   - The bot's payload-encoding (offsets in `parsePriceRaw`) round-trips
-  *     correctly: bytes built by FakeLazer and parsed by both the bot and the
-  *     validator agree on the price.
+  *   - `CdpTransactions.liquidateCdp(... cachedPriceBytes = Some(...))` works end-to-end against
+  *     the chain.
+  *   - The on-chain `CdpValidator` accepts the liquidation when the cached price drives LTV past
+  *     90%.
+  *   - The bot's payload-encoding (offsets in `parsePriceRaw`) round-trips correctly: bytes built
+  *     by FakeLazer and parsed by both the bot and the validator agree on the price.
   *
   * What this does NOT verify (deferred to a separate test):
-  *   - The full bot lifecycle (`BotApp` + `ChainFollower` + `PriceStream`
-  *     + N2N stream-sync); covered separately, requires Yaci's N2N port.
+  *   - The full bot lifecycle (`BotApp` + `CdpSource` + `PriceStream` + N2N stream-sync); covered
+  *     separately, requires Yaci's N2N port.
   *   - Real Pyth Ed25519 verification (deferred to task #13).
   */
 class LiquidationFlowTest extends AnyFunSuite with YaciDevKitTest {
@@ -49,7 +48,9 @@ class LiquidationFlowTest extends AnyFunSuite with YaciDevKitTest {
         // slash because PythClient builds `uri"$base/assets/..."`.
         val yaciBlockfrostUrl = container.getYaciStoreApiUrl().stripSuffix("/")
 
-        info(s"Yaci envName=${yaciCtx.envName}, network=${cardanoInfo.network}, store=$yaciBlockfrostUrl")
+        info(
+          s"Yaci envName=${yaciCtx.envName}, network=${cardanoInfo.network}, store=$yaciBlockfrostUrl"
+        )
 
         // --- Step 1: bootstrap Pyth State ---
         info("Bootstrapping Pyth State UTxO (alwaysOk policy + alwaysOk withdraw script)")
@@ -58,7 +59,8 @@ class LiquidationFlowTest extends AnyFunSuite with YaciDevKitTest {
         val pythPolicyIdHex = PythStateBootstrap.pythPolicyId.toHex
 
         // --- Step 2: build AppCtx pointing at Yaci ---
-        val cdpScript = CdpContract(ByteString.unsafeFromArray(PythStateBootstrap.pythPolicyId.bytes))
+        val cdpScript =
+            CdpContract(ByteString.unsafeFromArray(PythStateBootstrap.pythPolicyId.bytes))
         val appCtx = new AppCtx(
           cardanoInfo,
           provider,
@@ -101,7 +103,8 @@ class LiquidationFlowTest extends AnyFunSuite with YaciDevKitTest {
         yaciCtx.waitForBlock()
 
         // --- Step 4: confirm CDP is on-chain ---
-        val cdpUtxo = appCtx.cdpQueries.findCdpUtxo(nftName.bytes.toHex)
+        val cdpUtxo = appCtx.cdpQueries
+            .findCdpUtxo(nftName.bytes.toHex)
             .getOrElse(fail("Opened CDP UTxO not found at script address"))
         info(s"CDP UTxO confirmed: ${cdpUtxo.input}")
 
@@ -120,8 +123,10 @@ class LiquidationFlowTest extends AnyFunSuite with YaciDevKitTest {
         // constrains the input set.
         info("Splitting off a 5-ADA pure-ADA UTxO for collateral")
         given CardanoInfo = cardanoInfo
-        val splitTx = txBuilder.payTo(alice.address, Value.lovelace(5_000_000L))
-            .complete(provider, alice.address).await(30.seconds)
+        val splitTx = txBuilder
+            .payTo(alice.address, Value.lovelace(5_000_000L))
+            .complete(provider, alice.address)
+            .await(30.seconds)
         provider.submit(alice.signer.sign(splitTx.transaction)).await(30.seconds) match
             case Right(_)  => yaciCtx.waitForBlock()
             case Left(err) => fail(s"Collateral split tx failed: $err")
@@ -129,31 +134,37 @@ class LiquidationFlowTest extends AnyFunSuite with YaciDevKitTest {
         // --- Step 6: gather alice's PUSD + collateral UTxOs (post-split) ---
         val allAlice = provider.findUtxos(alice.address).await(15.seconds) match
             case Right(found) => found
-            case Left(err) => fail(s"Wallet UTxO query failed: $err")
-        val pusdUtxos: Utxos = allAlice.filter {
-            case (_, o) => o.value.asset(appCtx.policyId, Assets.Pusd) > 0
+            case Left(err)    => fail(s"Wallet UTxO query failed: $err")
+        val pusdUtxos: Utxos = allAlice.filter { case (_, o) =>
+            o.value.asset(appCtx.policyId, Assets.Pusd) > 0
         }
         val totalPusd = pusdUtxos.values.map(_.value.asset(appCtx.policyId, Assets.Pusd)).sum
         info(s"Liquidator PUSD UTxOs: ${pusdUtxos.size}, total=$totalPusd μPUSD")
-        assert(totalPusd >= debtMicroPusd,
-          s"Liquidator must hold ≥$debtMicroPusd μPUSD; has $totalPusd")
+        assert(
+          totalPusd >= debtMicroPusd,
+          s"Liquidator must hold ≥$debtMicroPusd μPUSD; has $totalPusd"
+        )
 
         val selectedPusd = PusdSelection.greedy(pusdUtxos, appCtx.policyId, debtMicroPusd)
 
         val collateralUtxo: Utxo = allAlice
-            .find { case (_, o) => o.value.assets.assets.isEmpty && o.value.coin.value >= 5_000_000L && o.value.coin.value < 10_000_000L }
+            .find { case (_, o) =>
+                o.value.assets.assets.isEmpty && o.value.coin.value >= 5_000_000L && o.value.coin.value < 10_000_000L
+            }
             .map { case (in, out) => Utxo(in, out) }
             .getOrElse(fail(s"No pure-ADA collateral UTxO at alice. Have: $allAlice"))
 
         // --- Step 7: build + submit the liquidation tx ---
         info(s"Building liquidation tx with cached low-price bytes (raw=$lowPrice ⇒ ~0.30 ADA/USD)")
-        val liqBuilder = appCtx.cdpTransactions.liquidateCdp(
-          cdpUtxo = cdpUtxo,
-          liquidatorAddr = alice.address,
-          liquidatorPusdUtxos = selectedPusd,
-          now = Instant.now(),
-          cachedPriceBytes = Some(lowBytes)
-        ).collaterals(collateralUtxo)
+        val liqBuilder = appCtx.cdpTransactions
+            .liquidateCdp(
+              cdpUtxo = cdpUtxo,
+              liquidatorAddr = alice.address,
+              liquidatorPusdUtxos = selectedPusd,
+              now = Instant.now(),
+              cachedPriceBytes = Some(lowBytes)
+            )
+            .collaterals(collateralUtxo)
         val liqCompleted = liqBuilder.complete(provider, alice.address).await(60.seconds)
         val signedLiq = alice.signer.sign(liqCompleted.transaction)
         provider.submit(signedLiq).await(60.seconds) match

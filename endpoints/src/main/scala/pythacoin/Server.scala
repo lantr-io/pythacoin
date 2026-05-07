@@ -31,14 +31,14 @@ case class OpenCdpRequest(
 ) derives upickle.default.ReadWriter
 
 case class BorrowRequest(
-    nftName: String,   // hex-encoded NFT asset name
-    amount: Double,    // additional PUSD to borrow
+    nftName: String, // hex-encoded NFT asset name
+    amount: Double, // additional PUSD to borrow
     ownerAddress: String
 ) derives upickle.default.ReadWriter
 
 case class RepayRequest(
     nftName: String,
-    amount: Double,    // PUSD to repay
+    amount: Double, // PUSD to repay
     ownerAddress: String
 ) derives upickle.default.ReadWriter
 
@@ -59,8 +59,8 @@ case class TxResponse(
 
 /** Request to merge wallet witness with unsigned tx and submit to the chain. */
 case class SubmitTxRequest(
-    txCborHex: String,      // unsigned tx CBOR from the build step
-    witnessCborHex: String   // CIP-30 signTx result (TransactionWitnessSet CBOR)
+    txCborHex: String, // unsigned tx CBOR from the build step
+    witnessCborHex: String // CIP-30 signTx result (TransactionWitnessSet CBOR)
 ) derives upickle.default.ReadWriter
 
 case class SubmitTxResponse(
@@ -70,11 +70,10 @@ case class SubmitTxResponse(
 /** HTTP API server built with Tapir (served by Netty).
   *
   * Endpoints follow a build-then-sign pattern:
-  * 1. Frontend calls POST /cdp/open (or borrow/repay/close/liquidate) with parameters
-  * 2. Server builds an unsigned transaction and returns CBOR hex
-  * 3. Frontend signs via CIP-30 wallet (signTx with partial=true)
-  * 4. Frontend calls POST /tx/submit with unsigned tx + wallet witness
-  * 5. Server merges witnesses and submits to Blockfrost
+  *   1. Frontend calls POST /cdp/open (or borrow/repay/close/liquidate) with parameters 2. Server
+  *      builds an unsigned transaction and returns CBOR hex 3. Frontend signs via CIP-30 wallet
+  *      (signTx with partial=true) 4. Frontend calls POST /tx/submit with unsigned tx + wallet
+  *      witness 5. Server merges witnesses and submits to Blockfrost
   *
   * Auto-generated Swagger UI is available at /docs.
   */
@@ -83,8 +82,9 @@ class Server(ctx: AppCtx):
 
     /** Parse address from hex (CIP-30 getUsedAddresses returns hex) or bech32 string. */
     private def parseAddress(addr: String): Address =
-        val parsed = if addr.startsWith("addr") then Address.fromBech32(addr)
-        else Address.fromBytes(addr.hexToBytes)
+        val parsed =
+            if addr.startsWith("addr") then Address.fromBech32(addr)
+            else Address.fromBytes(addr.hexToBytes)
         Log.info(s"Parsed address: ${addr.take(20)}... -> $parsed")
         parsed
 
@@ -98,11 +98,13 @@ class Server(ctx: AppCtx):
                 val updateBytes = ctx.pythClient.fetchPriceUpdate()
                 val price = ctx.pythClient.parsePrice(updateBytes)
                 Log.info(s"Fetched price from Pyth Lazer: $price USD/ADA")
-                Right(PriceInfo(
-                  adaUsd = price.toDouble,
-                  timestamp = Instant.now().toString,
-                  policyId = ctx.policyId.toHex
-                ))
+                Right(
+                  PriceInfo(
+                    adaUsd = price.toDouble,
+                    timestamp = Instant.now().toString,
+                    policyId = ctx.policyId.toHex
+                  )
+                )
             catch case e: Exception => Left(e.getMessage)
         }
 
@@ -124,14 +126,18 @@ class Server(ctx: AppCtx):
         .errorOut(stringBody)
         .handle { req =>
             try
-                Log.info(s"POST /cdp/open: collateral=${req.collateralAda} ADA, borrow=${req.borrowPusd} PUSD")
+                Log.info(
+                  s"POST /cdp/open: collateral=${req.collateralAda} ADA, borrow=${req.borrowPusd} PUSD"
+                )
                 val ownerAddr = parseAddress(req.ownerAddress)
                 val collateralLovelace = (req.collateralAda * 1_000_000).toLong
                 val debtPusd = (req.borrowPusd * 1_000_000).toLong
                 val ownerPkh = ownerAddr match
-                    case s: ShelleyAddress => s.payment match
-                        case ShelleyPaymentPart.Key(hash) => PubKeyHash(hash: ByteString)
-                        case _ => throw RuntimeException("Owner address must have a key credential")
+                    case s: ShelleyAddress =>
+                        s.payment match
+                            case ShelleyPaymentPart.Key(hash) => PubKeyHash(hash: ByteString)
+                            case _ =>
+                                throw RuntimeException("Owner address must have a key credential")
                     case _ => throw RuntimeException("Owner address must be a Shelley address")
                 Log.info(s"Owner PKH: ${ownerPkh.hash.toHex}")
                 val nftName = AssetName(ByteString.fromString("CDP-" + System.currentTimeMillis()))
@@ -139,16 +145,22 @@ class Server(ctx: AppCtx):
                 val now = Instant.now()
                 Log.info("Building openCdp transaction...")
                 val builder = ctx.cdpTransactions.openCdp(
-                  collateralLovelace, debtPusd, nftName, ownerPkh, ownerAddr, now
+                  collateralLovelace,
+                  debtPusd,
+                  nftName,
+                  ownerPkh,
+                  ownerAddr,
+                  now
                 )
                 Log.info("Completing transaction...")
                 val completed = builder.complete(ctx.provider, ownerAddr).await(30.seconds)
                 val tx = completed.transaction
                 Log.info(s"Transaction built successfully:\n${tx.showDetailedHighlighted}")
                 Right(TxResponse(tx.toCbor.toHex))
-            catch case e: Exception =>
-                Log.error(s"POST /cdp/open failed: ${e.getMessage}", e)
-                Left(e.getMessage)
+            catch
+                case e: Exception =>
+                    Log.error(s"POST /cdp/open failed: ${e.getMessage}", e)
+                    Left(e.getMessage)
         }
 
     // --- POST /cdp/borrow ---
@@ -161,9 +173,11 @@ class Server(ctx: AppCtx):
             try
                 Log.info(s"POST /cdp/borrow: nft=${req.nftName}, amount=${req.amount}")
                 val ownerAddr = parseAddress(req.ownerAddress)
-                val cdpUtxo = ctx.cdpQueries.findCdpUtxo(req.nftName).getOrElse(
-                  throw RuntimeException(s"CDP not found: ${req.nftName}")
-                )
+                val cdpUtxo = ctx.cdpQueries
+                    .findCdpUtxo(req.nftName)
+                    .getOrElse(
+                      throw RuntimeException(s"CDP not found: ${req.nftName}")
+                    )
                 val amount = (req.amount * 1_000_000).toLong
                 val now = Instant.now()
                 val builder = ctx.cdpTransactions.borrowPusd(cdpUtxo, amount, ownerAddr, now)
@@ -171,9 +185,10 @@ class Server(ctx: AppCtx):
                 val tx = completed.transaction
                 Log.info(s"Borrow tx built:\n${tx.showDetailedHighlighted}")
                 Right(TxResponse(tx.toCbor.toHex))
-            catch case e: Exception =>
-                Log.error(s"POST /cdp/borrow failed: ${e.getMessage}", e)
-                Left(e.getMessage)
+            catch
+                case e: Exception =>
+                    Log.error(s"POST /cdp/borrow failed: ${e.getMessage}", e)
+                    Left(e.getMessage)
         }
 
     // --- POST /cdp/repay ---
@@ -186,9 +201,11 @@ class Server(ctx: AppCtx):
             try
                 Log.info(s"POST /cdp/repay: nft=${req.nftName}, amount=${req.amount}")
                 val ownerAddr = parseAddress(req.ownerAddress)
-                val cdpUtxo = ctx.cdpQueries.findCdpUtxo(req.nftName).getOrElse(
-                  throw RuntimeException(s"CDP not found: ${req.nftName}")
-                )
+                val cdpUtxo = ctx.cdpQueries
+                    .findCdpUtxo(req.nftName)
+                    .getOrElse(
+                      throw RuntimeException(s"CDP not found: ${req.nftName}")
+                    )
                 val amount = (req.amount * 1_000_000).toLong
                 val now = Instant.now()
                 val builder = ctx.cdpTransactions.repayPusd(cdpUtxo, amount, ownerAddr, now)
@@ -196,9 +213,10 @@ class Server(ctx: AppCtx):
                 val tx = completed.transaction
                 Log.info(s"Repay tx built:\n${tx.showDetailedHighlighted}")
                 Right(TxResponse(tx.toCbor.toHex))
-            catch case e: Exception =>
-                Log.error(s"POST /cdp/repay failed: ${e.getMessage}", e)
-                Left(e.getMessage)
+            catch
+                case e: Exception =>
+                    Log.error(s"POST /cdp/repay failed: ${e.getMessage}", e)
+                    Left(e.getMessage)
         }
 
     // --- POST /cdp/close ---
@@ -211,18 +229,21 @@ class Server(ctx: AppCtx):
             try
                 Log.info(s"POST /cdp/close: nft=${req.nftName}")
                 val ownerAddr = parseAddress(req.ownerAddress)
-                val cdpUtxo = ctx.cdpQueries.findCdpUtxo(req.nftName).getOrElse(
-                  throw RuntimeException(s"CDP not found: ${req.nftName}")
-                )
+                val cdpUtxo = ctx.cdpQueries
+                    .findCdpUtxo(req.nftName)
+                    .getOrElse(
+                      throw RuntimeException(s"CDP not found: ${req.nftName}")
+                    )
                 val now = Instant.now()
                 val builder = ctx.cdpTransactions.closeCdp(cdpUtxo, ownerAddr, now)
                 val completed = builder.complete(ctx.provider, ownerAddr).await(30.seconds)
                 val tx = completed.transaction
                 Log.info(s"Close tx built:\n${tx.showDetailedHighlighted}")
                 Right(TxResponse(tx.toCbor.toHex))
-            catch case e: Exception =>
-                Log.error(s"POST /cdp/close failed: ${e.getMessage}", e)
-                Left(e.getMessage)
+            catch
+                case e: Exception =>
+                    Log.error(s"POST /cdp/close failed: ${e.getMessage}", e)
+                    Left(e.getMessage)
         }
 
     // --- POST /cdp/liquidate ---
@@ -235,9 +256,11 @@ class Server(ctx: AppCtx):
             try
                 Log.info(s"POST /cdp/liquidate: nft=${req.nftName}")
                 val liquidatorAddr = parseAddress(req.liquidatorAddress)
-                val cdpUtxo = ctx.cdpQueries.findCdpUtxo(req.nftName).getOrElse(
-                  throw RuntimeException(s"CDP not found: ${req.nftName}")
-                )
+                val cdpUtxo = ctx.cdpQueries
+                    .findCdpUtxo(req.nftName)
+                    .getOrElse(
+                      throw RuntimeException(s"CDP not found: ${req.nftName}")
+                    )
                 // Pre-check: verify the liquidator has enough PUSD to cover the CDP's debt.
                 // We also collect the specific UTxOs containing PUSD so the tx builder can
                 // explicitly spend them (needed because PUSD lives at the liquidator's address,
@@ -247,7 +270,8 @@ class Server(ctx: AppCtx):
                 val pusdAsset = AssetName(ByteString.fromString("PUSD"))
                 val liquidatorUtxos = ctx.provider.findUtxos(liquidatorAddr).await(30.seconds) match
                     case Right(found) => found
-                    case Left(error) => throw RuntimeException(s"Failed to query liquidator UTxOs: $error")
+                    case Left(error) =>
+                        throw RuntimeException(s"Failed to query liquidator UTxOs: $error")
                 val pusdUtxos = liquidatorUtxos.filter { case (_, output) =>
                     output.value.asset(ctx.policyId, pusdAsset) > 0
                 }
@@ -257,14 +281,16 @@ class Server(ctx: AppCtx):
                       s"Insufficient PUSD: liquidator has ${liquidatorPusd / 1_000_000.0} PUSD but needs ${debtPusd / 1_000_000.0} PUSD to cover debt"
                     )
                 val now = Instant.now()
-                val builder = ctx.cdpTransactions.liquidateCdp(cdpUtxo, liquidatorAddr, pusdUtxos, now)
+                val builder =
+                    ctx.cdpTransactions.liquidateCdp(cdpUtxo, liquidatorAddr, pusdUtxos, now)
                 val completed = builder.complete(ctx.provider, liquidatorAddr).await(30.seconds)
                 val tx = completed.transaction
                 Log.info(s"Liquidate tx built:\n${tx.showDetailedHighlighted}")
                 Right(TxResponse(tx.toCbor.toHex))
-            catch case e: Exception =>
-                Log.error(s"POST /cdp/liquidate failed: ${e.getMessage}", e)
-                Left(e.getMessage)
+            catch
+                case e: Exception =>
+                    Log.error(s"POST /cdp/liquidate failed: ${e.getMessage}", e)
+                    Left(e.getMessage)
         }
 
     // --- POST /tx/submit ---
@@ -279,9 +305,17 @@ class Server(ctx: AppCtx):
         .errorOut(stringBody)
         .handle { req =>
             try
-                Log.info(s"POST /tx/submit: txCborHex=${if req.txCborHex == null then "NULL" else s"${req.txCborHex.length} chars"}, witnessCborHex=${if req.witnessCborHex == null then "NULL" else s"${req.witnessCborHex.length} chars"}")
+                Log.info(s"POST /tx/submit: txCborHex=${
+                        if req.txCborHex == null then "NULL" else s"${req.txCborHex.length} chars"
+                    }, witnessCborHex=${
+                        if req.witnessCborHex == null then "NULL"
+                        else s"${req.witnessCborHex.length} chars"
+                    }")
                 require(req.txCborHex != null && req.txCborHex.nonEmpty, "txCborHex is required")
-                require(req.witnessCborHex != null && req.witnessCborHex.nonEmpty, "witnessCborHex is required")
+                require(
+                  req.witnessCborHex != null && req.witnessCborHex.nonEmpty,
+                  "witnessCborHex is required"
+                )
                 given ProtocolVersion = ProtocolVersion.conwayPV
                 val unsignedTx = Transaction.fromCbor(req.txCborHex.hexToBytes)
                 Log.info(s"Parsed unsigned tx: ${unsignedTx.id.toHex}")
@@ -289,14 +323,18 @@ class Server(ctx: AppCtx):
                 val witnessBytes = req.witnessCborHex.hexToBytes
                 given OriginalCborByteArray = OriginalCborByteArray(witnessBytes)
                 val walletWitnesses = Cbor.decode[TransactionWitnessSet](witnessBytes)
-                Log.info(s"Wallet provided ${walletWitnesses.vkeyWitnesses.toSet.size} vkey witnesses")
+                Log.info(
+                  s"Wallet provided ${walletWitnesses.vkeyWitnesses.toSet.size} vkey witnesses"
+                )
                 // Merge wallet vkeys with any existing witnesses (e.g. from script evaluation)
                 val existing = unsignedTx.witnessSet
                 val mergedVkeys = TaggedSortedSet.from(
                   existing.vkeyWitnesses.toSet ++ walletWitnesses.vkeyWitnesses.toSet
                 )
                 val signedTx = unsignedTx.withWitness(existing.copy(vkeyWitnesses = mergedVkeys))
-                Log.info(s"Submitting tx ${signedTx.id.toHex} with ${mergedVkeys.toSet.size} vkey witnesses...")
+                Log.info(
+                  s"Submitting tx ${signedTx.id.toHex} with ${mergedVkeys.toSet.size} vkey witnesses..."
+                )
                 val result = ctx.provider.submit(signedTx).await(30.seconds)
                 result match
                     case Right(txHash) =>
@@ -305,10 +343,11 @@ class Server(ctx: AppCtx):
                     case Left(error) =>
                         Log.error(s"Tx submission failed: $error")
                         Left(s"Submission failed: $error")
-            catch case e: Exception =>
-                val msg = Option(e.getMessage).getOrElse(e.getClass.getName)
-                Log.error(s"POST /tx/submit failed: $msg", e)
-                Left(msg)
+            catch
+                case e: Exception =>
+                    val msg = Option(e.getMessage).getOrElse(e.getClass.getName)
+                    Log.error(s"POST /tx/submit failed: $msg", e)
+                    Left(msg)
         }
 
     private val apiEndpoints: List[ServerEndpoint[Any, Identity]] = List(

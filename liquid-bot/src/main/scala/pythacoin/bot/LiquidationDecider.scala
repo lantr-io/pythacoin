@@ -6,15 +6,14 @@ import pythacoin.onchain.CdpConsts
 /** Pure decision logic. Mirrors the on-chain LTV check from
   * `pythacoin.onchain.CdpValidator.isLtvBelow`:
   *
-  *   `LTV_below(threshold) := debt * 100 * ORACLE_SCALE <= threshold * collateral * price`
+  * `LTV_below(threshold) := debt * 100 * ORACLE_SCALE <= threshold * collateral * price`
   *
-  * The bot wants the inverse — it acts when the CDP is **at or above** the
-  * threshold, i.e. when `isLtvBelow(threshold)` is false.
+  * The bot wants the inverse — it acts when the CDP is **at or above** the threshold, i.e. when
+  * `isLtvBelow(threshold)` is false.
   *
-  * Threshold is supplied in basis points to give the operator finer control than
-  * the on-chain whole-percent threshold; the bot can choose to trigger slightly
-  * before the on-chain validator would accept the tx (e.g. front-running for
-  * safety) or stay conservative.
+  * Threshold is supplied in basis points to give the operator finer control than the on-chain
+  * whole-percent threshold; the bot can choose to trigger slightly before the on-chain validator
+  * would accept the tx (e.g. front-running for safety) or stay conservative.
   */
 object LiquidationDecider {
 
@@ -26,18 +25,17 @@ object LiquidationDecider {
         case Liquidate(ltvBps: Int)
     }
 
-    /** Decide whether `cdp` is liquidatable at `priceRaw` (the integer Pyth price,
-      * e.g. 75_230_000 for $0.7523/ADA), given the operator's `minLtvBps` trigger,
-      * the bot's available PUSD balance, and the minimum collateral the bot is
-      * willing to accept after fees + minUtxo overhead.
+    /** Decide whether `cdp` is liquidatable at `priceRaw` (the integer Pyth price, e.g. 75_230_000
+      * for $0.7523/ADA), given the operator's `minLtvBps` trigger, the bot's available PUSD
+      * balance, and the minimum collateral the bot is willing to accept after fees + minUtxo
+      * overhead.
       *
-      * Note: `minProfitLovelace` is misnamed — it's a **minimum collateral
-      * floor** (`cdp.collateralLovelace >= minProfitLovelace`), used as a
-      * static proxy for `tx_fee + minUtxo`. Actual fees are only known after
-      * `TxBuilder.complete`, so the operator picks a floor conservative enough
-      * to avoid wasting fee budget on CDPs that wouldn't pay for their own
-      * liquidation tx. The env-var name (`PYTHACOIN_MIN_PROFIT_LOVELACE`)
-      * is preserved for backwards compatibility.
+      * Note: `minProfitLovelace` is misnamed — it's a **minimum collateral floor**
+      * (`cdp.collateralLovelace >= minProfitLovelace`), used as a static proxy for `tx_fee +
+      * minUtxo`. Actual fees are only known after `TxBuilder.complete`, so the operator picks a
+      * floor conservative enough to avoid wasting fee budget on CDPs that wouldn't pay for their
+      * own liquidation tx. The env-var name (`PYTHACOIN_MIN_PROFIT_LOVELACE`) is preserved for
+      * backwards compatibility.
       */
     def decide(
         cdp: CdpInfo,
@@ -61,9 +59,9 @@ object LiquidationDecider {
             else Decision.Liquidate(ltvBps)
     }
 
-    /** LTV expressed in basis points. Uses BigInt so it never overflows; saturates
-      * to `Int.MaxValue` if the ratio exceeds what `Int` can hold (extreme price
-      * crash where collateral value is essentially zero).
+    /** LTV expressed in basis points. Uses BigInt so it never overflows; saturates to
+      * `Int.MaxValue` if the ratio exceeds what `Int` can hold (extreme price crash where
+      * collateral value is essentially zero).
       */
     def ltvBpsOf(collateralLovelace: Long, debtPusd: Long, priceRaw: BigInt): Int = {
         val numerator = BigInt(debtPusd) * LtvScaleBps * OracleScale

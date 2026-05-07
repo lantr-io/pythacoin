@@ -14,17 +14,16 @@ import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.atomic.AtomicLong
 import scala.jdk.CollectionConverters.*
 
-/** In-process Pyth Lazer stand-in — REST endpoint at `POST /v1/latest_price`
-  * and a WS server at `/v1/stream` on a separate port. Both serve the same
-  * synthetic Solana-format payload, regenerated from `currentPriceRaw`.
+/** In-process Pyth Lazer stand-in — REST endpoint at `POST /v1/latest_price` and a WS server at
+  * `/v1/stream` on a separate port. Both serve the same synthetic Solana-format payload,
+  * regenerated from `currentPriceRaw`.
   *
-  * Drive the test by calling `setPrice(rawI64)`. WS subscribers get a fresh
-  * push within `pushIntervalMs`. REST callers always get the latest value.
+  * Drive the test by calling `setPrice(rawI64)`. WS subscribers get a fresh push within
+  * `pushIntervalMs`. REST callers always get the latest value.
   *
-  * The payload's signature/key/magic bytes are zeros — the test deploys
-  * `PlutusV3.alwaysOk` as the Pyth withdraw script, so on-chain phase-2 never
-  * actually verifies the signature. The bot's `parsePriceRaw` reads the price
-  * at offset 116+6 (LE I64); only that field needs to be correct.
+  * The payload's signature/key/magic bytes are zeros — the test deploys `PlutusV3.alwaysOk` as the
+  * Pyth withdraw script, so on-chain phase-2 never actually verifies the signature. The bot's
+  * `parsePriceRaw` reads the price at offset 116+6 (LE I64); only that field needs to be correct.
   */
 final class FakeLazerServer(
     httpPort: Int,
@@ -49,16 +48,21 @@ final class FakeLazerServer(
 
     private val httpServer: HttpServer = {
         val s = HttpServer.create(new InetSocketAddress(httpPort), 0)
-        s.createContext("/v1/latest_price", (ex: HttpExchange) => {
-            try
-                val body = restResponseJson(payloadBase64).getBytes(StandardCharsets.UTF_8)
-                ex.getResponseHeaders.add("Content-Type", "application/json")
-                ex.sendResponseHeaders(200, body.length)
-                val os = ex.getResponseBody
-                try os.write(body) finally os.close()
-            catch case e: Exception =>
-                log.warn(s"FakeLazer REST error: ${e.getMessage}")
-        })
+        s.createContext(
+          "/v1/latest_price",
+          (ex: HttpExchange) => {
+              try
+                  val body = restResponseJson(payloadBase64).getBytes(StandardCharsets.UTF_8)
+                  ex.getResponseHeaders.add("Content-Type", "application/json")
+                  ex.sendResponseHeaders(200, body.length)
+                  val os = ex.getResponseBody
+                  try os.write(body)
+                  finally os.close()
+              catch
+                  case e: Exception =>
+                      log.warn(s"FakeLazer REST error: ${e.getMessage}")
+          }
+        )
         s.setExecutor(null)
         s
     }
@@ -87,17 +91,22 @@ final class FakeLazerServer(
     }
 
     private val pushThread: Thread = {
-        val t = new Thread(() => {
-            while !Thread.currentThread.isInterrupted do
-                try
-                    val msg = wsPushJson(payloadBase64)
-                    wsClients.asScala.foreach { c =>
-                        try if c.isOpen then c.send(msg) catch case _: Exception => ()
-                    }
-                    Thread.sleep(pushIntervalMs)
-                catch case _: InterruptedException =>
-                    Thread.currentThread.interrupt()
-        }, "fake-lazer-push")
+        val t = new Thread(
+          () => {
+              while !Thread.currentThread.isInterrupted do
+                  try
+                      val msg = wsPushJson(payloadBase64)
+                      wsClients.asScala.foreach { c =>
+                          try if c.isOpen then c.send(msg)
+                          catch case _: Exception => ()
+                      }
+                      Thread.sleep(pushIntervalMs)
+                  catch
+                      case _: InterruptedException =>
+                          Thread.currentThread.interrupt()
+          },
+          "fake-lazer-push"
+        )
         t.setDaemon(true)
         t
     }
@@ -111,29 +120,31 @@ final class FakeLazerServer(
 
     def stop(): Unit = {
         pushThread.interrupt()
-        try wsServer.stop(500) catch case _: Exception => ()
-        try httpServer.stop(0)  catch case _: Exception => ()
+        try wsServer.stop(500)
+        catch case _: Exception => ()
+        try httpServer.stop(0)
+        catch case _: Exception => ()
     }
 
     def httpUrl: String = s"http://localhost:$httpPort/v1/latest_price"
-    def wsUrl: String   = s"ws://localhost:$wsPort"
+    def wsUrl: String = s"ws://localhost:$wsPort"
 }
 
 object FakeLazerServer {
 
-    /** Synthetic Solana-format payload — zero-filled envelope + payload header
-      * with a single ADA/USD feed carrying `priceRaw` as an I64 LE.
+    /** Synthetic Solana-format payload — zero-filled envelope + payload header with a single
+      * ADA/USD feed carrying `priceRaw` as an I64 LE.
       *
-      * Layout (matches `CdpValidator.parsePythPrice`):
-      *   [4 magic][64 sig][32 signer key][2 payload_size]    ← envelope, 102 bytes
-      *   [4 magic][8 timestamp_us][1 channel_id][1 feeds_len] ← payload header, 14 bytes (offset 102)
-      *   [4 feed_id (=16 ADA/USD)][1 props_len (=1)][1 prop_id (=0 Price)][8 price I64 LE]  ← feed (offset 116)
+      * Layout (matches `CdpValidator.parsePythPrice`): [4 magic][64 sig][32 signer key][2
+      * payload_size] ← envelope, 102 bytes [4 magic][8 timestamp_us][1 channel_id][1 feeds_len] ←
+      * payload header, 14 bytes (offset 102) [4 feed_id (=16 ADA/USD)][1 props_len (=1)][1 prop_id
+      * (=0 Price)][8 price I64 LE] ← feed (offset 116)
       */
     private val AdaUsdFeedId: Int = 16
 
-    /** Build the synthetic Solana-format payload for a given raw price.
-      * Exposed so a test that wants to drive a single tx (without subscribing
-      * to the WS push stream) can synthesize the cached-bytes input directly.
+    /** Build the synthetic Solana-format payload for a given raw price. Exposed so a test that
+      * wants to drive a single tx (without subscribing to the WS push stream) can synthesize the
+      * cached-bytes input directly.
       */
     def buildPayload(priceRaw: Long): Array[Byte] = {
         val total = 102 + 14 + 4 + 1 + 1 + 8 // 130 bytes

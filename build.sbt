@@ -81,7 +81,7 @@ lazy val liquidBot = (project in file("liquid-bot"))
 // Integration tests — Yaci-DevKit and preprod scenarios. Depends on commonLib
 // (for AppCtx, queries, tx-builders), endpoints in test scope (PreprodCdpTest
 // hits the running HTTP server), and liquidBot in test scope (LiquidationFlowTest
-// drives BotApp/Evaluator/PriceCache against a Yaci + fake-Lazer harness).
+// drives Bot/Evaluator/PriceCache against a Yaci + fake-Lazer harness).
 lazy val integration = (project in file("integration"))
     .dependsOn(
       commonLib % "compile->compile;test->test",
@@ -95,7 +95,9 @@ lazy val integration = (project in file("integration"))
       // run doesn't need .env / Blockfrost credentials. Run them explicitly with
       //   sbt 'integration/testOnly *Preprod* -- -n pythacoin.integration.PreprodTag'
       Test / testOptions += Tests.Argument(
-        TestFrameworks.ScalaTest, "-l", "pythacoin.integration.PreprodTag"
+        TestFrameworks.ScalaTest,
+        "-l",
+        "pythacoin.integration.PreprodTag"
       ),
       libraryDependencies ++= Seq(
         "org.scalus" %% "scalus-testkit" % scalusVersion,

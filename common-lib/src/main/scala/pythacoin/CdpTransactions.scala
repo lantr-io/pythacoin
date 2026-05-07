@@ -18,16 +18,16 @@ import scala.concurrent.duration.*
 /** Off-chain transaction builders for all CDP operations.
   *
   * Each method returns a partially-built TxBuilder that the caller completes via
-  * `builder.complete(provider, changeAddress)`, which handles coin selection,
-  * fee calculation, and collateral. The resulting unsigned transaction is then
-  * sent to the frontend for wallet signing.
+  * `builder.complete(provider, changeAddress)`, which handles coin selection, fee calculation, and
+  * collateral. The resulting unsigned transaction is then sent to the frontend for wallet signing.
   *
   * All transactions that read the oracle price include:
-  * - Pyth State UTxO as a reference input (provides the withdraw script hash)
-  * - A withdrawal with zero rewards to the Pyth withdraw script address
-  * - The price update bytes as the withdrawal redeemer
-  * This "withdrawal trick" lets the Pyth withdraw script verify the price signature
-  * once, and our validator can read the verified price from the redeemer.
+  *   - Pyth State UTxO as a reference input (provides the withdraw script hash).
+  *   - A withdrawal with zero rewards to the Pyth withdraw script address.
+  *   - The price update bytes as the withdrawal redeemer.
+  *
+  * This "withdrawal trick" lets the Pyth withdraw script verify the price signature once, and our
+  * validator can read the verified price from the redeemer.
   */
 class CdpTransactions(ctx: AppCtx, pythClient: PythClient)(using CardanoInfo) {
 
@@ -35,8 +35,8 @@ class CdpTransactions(ctx: AppCtx, pythClient: PythClient)(using CardanoInfo) {
     private val scriptAddr = ctx.scriptAddr
     private val pusdAsset = AssetName(utf8"PUSD")
 
-    /** Build a transaction to open a new CDP.
-      * The NFT name is derived from sha2_256(firstInput.txId ++ firstInput.index).
+    /** Build a transaction to open a new CDP. The NFT name is derived from sha2_256(firstInput.txId
+      * ++ firstInput.index).
       */
     def openCdp(
         collateralLovelace: Long,
@@ -47,7 +47,8 @@ class CdpTransactions(ctx: AppCtx, pythClient: PythClient)(using CardanoInfo) {
         now: Instant,
         cachedPriceBytes: Option[ByteString] = None
     ): TxBuilder = {
-        val (pythState, pythWithdrawAddr, updateBytes, pythWitness) = fetchPythInfo(now, cachedPriceBytes)
+        val (pythState, pythWithdrawAddr, updateBytes, pythWitness) =
+            fetchPythInfo(now, cachedPriceBytes)
         val datum = CdpDatum(ownerPkh, BigInt(debtPusd))
 
         txBuilder
@@ -75,7 +76,8 @@ class CdpTransactions(ctx: AppCtx, pythClient: PythClient)(using CardanoInfo) {
         now: Instant,
         cachedPriceBytes: Option[ByteString] = None
     ): TxBuilder = {
-        val (pythState, pythWithdrawAddr, updateBytes, pythWitness) = fetchPythInfo(now, cachedPriceBytes)
+        val (pythState, pythWithdrawAddr, updateBytes, pythWitness) =
+            fetchPythInfo(now, cachedPriceBytes)
         val oldDatum = parseCdpDatum(cdpUtxo)
         val nftName = findNftName(cdpUtxo)
         val newDatum = CdpDatum(oldDatum.owner, oldDatum.debt + additionalPusd)
@@ -145,7 +147,8 @@ class CdpTransactions(ctx: AppCtx, pythClient: PythClient)(using CardanoInfo) {
     }
 
     /** Build a transaction to liquidate an under-collateralized CDP.
-      * @param liquidatorPusdUtxos UTxOs from the liquidator that contain PUSD tokens to burn
+      * @param liquidatorPusdUtxos
+      *   UTxOs from the liquidator that contain PUSD tokens to burn
       */
     def liquidateCdp(
         cdpUtxo: Utxo,
@@ -154,7 +157,8 @@ class CdpTransactions(ctx: AppCtx, pythClient: PythClient)(using CardanoInfo) {
         now: Instant,
         cachedPriceBytes: Option[ByteString] = None
     ): TxBuilder = {
-        val (pythState, pythWithdrawAddr, updateBytes, pythWitness) = fetchPythInfo(now, cachedPriceBytes)
+        val (pythState, pythWithdrawAddr, updateBytes, pythWitness) =
+            fetchPythInfo(now, cachedPriceBytes)
         val oldDatum = parseCdpDatum(cdpUtxo)
         val nftName = findNftName(cdpUtxo)
         val collateral = cdpUtxo.output.value.coin.value
@@ -177,12 +181,11 @@ class CdpTransactions(ctx: AppCtx, pythClient: PythClient)(using CardanoInfo) {
     /** Fetch Pyth oracle state and build the withdrawal witness.
       *
       * Returns everything needed to include a Pyth price in a transaction:
-      * 1. The enriched Pyth State UTxO (with scriptRef manually added, since Blockfrost
-      *    doesn't populate the scriptRef field on reference UTxOs)
-      * 2. The stake address of the Pyth withdraw script (for the zero-reward withdrawal)
-      * 3. The raw price update bytes (for off-chain display/logging)
-      * 4. A TwoArgumentPlutusScriptWitness using the reference script (Conway requires
-      *    using the reference script, not attaching a copy)
+      *   1. The enriched Pyth State UTxO (with scriptRef manually added, since Blockfrost doesn't
+      *      populate the scriptRef field on reference UTxOs) 2. The stake address of the Pyth
+      *      withdraw script (for the zero-reward withdrawal) 3. The raw price update bytes (for
+      *      off-chain display/logging) 4. A TwoArgumentPlutusScriptWitness using the reference
+      *      script (Conway requires using the reference script, not attaching a copy)
       */
     private def fetchPythInfo(
         now: Instant,
@@ -191,12 +194,15 @@ class CdpTransactions(ctx: AppCtx, pythClient: PythClient)(using CardanoInfo) {
         Log.info("Fetching Pyth oracle info...")
         val pythState = pythClient.fetchPythState()
         val withdrawHash = pythClient.extractWithdrawScript(pythState)
-        val pythWithdrawAddr = StakeAddress(ctx.cardanoInfo.network, StakePayload.Script(withdrawHash))
+        val pythWithdrawAddr =
+            StakeAddress(ctx.cardanoInfo.network, StakePayload.Script(withdrawHash))
         Log.info(s"Pyth withdraw address: ${pythWithdrawAddr.toBech32}")
         // Reuse the bytes the bot just received over WS instead of round-tripping
         // a second REST call per submit; on cache miss fall back to REST.
         val updateBytes = cachedPriceBytes.getOrElse(pythClient.fetchPriceUpdate())
-        Log.info(s"Price update bytes: ${updateBytes.size} bytes (source=${if cachedPriceBytes.isDefined then "cache" else "REST"})")
+        Log.info(s"Price update bytes: ${updateBytes.size} bytes (source=${
+                if cachedPriceBytes.isDefined then "cache" else "REST"
+            })")
         // Blockfrost doesn't populate scriptRef on UTxOs, so we manually enrich it
         val withdrawScript = pythClient.fetchScript(withdrawHash)
         val enrichedOutput = TransactionOutput.Babbage(
@@ -229,6 +235,6 @@ class CdpTransactions(ctx: AppCtx, pythClient: PythClient)(using CardanoInfo) {
         val nftEntries = assets.filter { case (name, _) => name != pusdAsset }
         nftEntries.headOption match
             case Some((name, _)) => name
-            case None => throw RuntimeException("No CDP NFT found in UTxO")
+            case None            => throw RuntimeException("No CDP NFT found in UTxO")
     }
 }

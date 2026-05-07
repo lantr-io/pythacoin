@@ -42,9 +42,9 @@ object CdpEvent {
   * Each entry stores the parsed `CdpInfo` alongside the `Utxo` so the consumer never has to
   * re-decode the inline datum on every event.
   */
-final class ChainFollower(ctx: BotCtx, onChange: CdpEvent => Unit) {
+final class CdpSource(ctx: BotCtx, onChange: CdpEvent => Unit) {
 
-    private val log = LoggerFactory.getLogger(classOf[ChainFollower])
+    private val log = LoggerFactory.getLogger(classOf[CdpSource])
 
     private val cdpView = TrieMap.empty[TransactionInput, (Utxo, CdpInfo)]
 
@@ -71,10 +71,10 @@ final class ChainFollower(ctx: BotCtx, onChange: CdpEvent => Unit) {
     /** Subscribe to UTxO events at the CDP script address and run the callback loop until the flow
       * terminates. Blocks the calling (virtual) thread.
       */
-    def runForever(): Unit = {
+    def run(): Unit = {
         val query = buildEventQuery((u, _) => u.output.address == ctx.scriptAddr)
         val flow = ctx.streamProvider.subscribeUtxoQuery(query, SubscriptionOptions())
-        log.info(s"ChainFollower subscribed to ${BotCtx.renderAddress(ctx.scriptAddr)}")
+        log.info(s"CdpSource subscribed to ${BotCtx.renderAddress(ctx.scriptAddr)}")
         flow.runForeach(handleEvent)
     }
 

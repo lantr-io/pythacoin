@@ -8,9 +8,8 @@ import scalus.utils.await
 import scala.concurrent.ExecutionContext.Implicits.global
 import scala.concurrent.duration.*
 
-/** Read-only queries against the blockchain to discover and inspect CDPs.
-  * All CDPs live at the script address and are identified by a unique NFT
-  * under the script's policy ID.
+/** Read-only queries against the blockchain to discover and inspect CDPs. All CDPs live at the
+  * script address and are identified by a unique NFT under the script's policy ID.
   */
 class CdpQueries(ctx: AppCtx) {
 
@@ -20,7 +19,7 @@ class CdpQueries(ctx: AppCtx) {
     def listCdps(): Seq[CdpInfo] = {
         val utxos = ctx.provider.findUtxos(ctx.scriptAddr).await(30.seconds) match
             case Right(found) => found
-            case Left(error) => throw RuntimeException(s"Failed to query CDPs: $error")
+            case Left(error)  => throw RuntimeException(s"Failed to query CDPs: $error")
 
         utxos.toSeq.flatMap { case (input, output) =>
             parseCdpInfo(output)
@@ -36,7 +35,7 @@ class CdpQueries(ctx: AppCtx) {
         val nftAsset = AssetName(ByteString.fromHex(nftName))
         val utxos = ctx.provider.findUtxos(ctx.scriptAddr).await(30.seconds) match
             case Right(found) => found
-            case Left(error) => throw RuntimeException(s"Failed to query CDPs: $error")
+            case Left(error)  => throw RuntimeException(s"Failed to query CDPs: $error")
 
         utxos.collectFirst {
             case (input, output) if output.value.hasAsset(policyId, nftAsset) =>
@@ -44,10 +43,9 @@ class CdpQueries(ctx: AppCtx) {
         }
     }
 
-    /** Parse `CdpInfo` from a transaction output, if it's a valid CDP — i.e. it
-      * carries an inline datum and exactly one non-PUSD token of quantity 1
-      * under our policy (the CDP NFT). Public so the bot can reuse the same
-      * predicate without duplicating it.
+    /** Parse `CdpInfo` from a transaction output, if it's a valid CDP — i.e. it carries an inline
+      * datum and exactly one non-PUSD token of quantity 1 under our policy (the CDP NFT). Public so
+      * the bot can reuse the same predicate without duplicating it.
       */
     def parseCdpInfo(output: TransactionOutput): Option[CdpInfo] = {
         val assets = output.value.assets.assets.getOrElse(policyId, Map.empty)
@@ -69,8 +67,8 @@ class CdpQueries(ctx: AppCtx) {
     }
 }
 
-/** CDP state returned by the /cdps endpoint.
-  * LTV is set to 0 here — the frontend computes it using the current price.
+/** CDP state returned by the /cdps endpoint. LTV is set to 0 here — the frontend computes it using
+  * the current price.
   */
 case class CdpInfo(
     nftName: String,
@@ -80,8 +78,8 @@ case class CdpInfo(
     ltv: Double
 ) derives upickle.default.ReadWriter
 
-/** Current ADA/USD price returned by the /price endpoint.
-  * Includes the policy ID so the frontend can identify PUSD tokens in the wallet.
+/** Current ADA/USD price returned by the /price endpoint. Includes the policy ID so the frontend
+  * can identify PUSD tokens in the wallet.
   */
 case class PriceInfo(
     adaUsd: Double,

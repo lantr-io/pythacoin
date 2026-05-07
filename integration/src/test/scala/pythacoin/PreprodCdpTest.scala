@@ -93,7 +93,8 @@ class PreprodCdpTest extends AnyFunSuite {
         val cdpOutput = openTx.body.value.outputs.head.value
         val cdpValue: Value = cdpOutput.value
         val pusdHex = scalus.uplc.builtin.ByteString.fromString("PUSD").toHex
-        val nftName = cdpValue.assets.assets.values.flatMap(_.keys)
+        val nftName = cdpValue.assets.assets.values
+            .flatMap(_.keys)
             .map(_.bytes.toHex)
             .find(_ != pusdHex)
             .getOrElse(fail("No CDP NFT found in open tx outputs"))

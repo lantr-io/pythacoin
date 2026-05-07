@@ -20,13 +20,13 @@ self-minted PUSD reserves, multi-collateral.
                 │ UtxoEvent (Created / Spent / RolledBack)
                 ▼
   ┌────────────────────────────┐
-  │  ChainFollower             │  TrieMap[input → (Utxo, CdpInfo)]
+  │  CdpSource             │  TrieMap[input → (Utxo, CdpInfo)]
   │  (CDP view, parsed once)   │  parseCdpInfo at insert; readOnlySnapshot on rollback
   └─────────────┬──────────────┘
                 │ CdpEvent: Added(utxo, info) | Removed(input) | Reseeded(all)
                 ▼
   ┌────────────────────────────┐    ┌──────────────────────┐
-  │  BotApp.evaluate           │◀───│  PythClient          │
+  │  Evaluator.tryEvaluate     │◀───│  PythClient          │
   │  (decider over scoped set) │    │  .parsePriceRaw(...) │
   └─────────────┬──────────────┘    └──────────────────────┘
                 │ Liquidate(cdpUtxo, info)
@@ -55,15 +55,17 @@ Per-event work is **scoped to what changed**:
 
 | Component                       | Responsibility                                                                      |
 | ------------------------------- | ----------------------------------------------------------------------------------- |
-| `BotApp`                        | `OxApp` entry point: decline CLI, builds `BotConfig`, runs the chain follower.      |
+| `Bot` (companion object)        | `OxApp` entry point: defers CLI parsing to `BotCli`, then constructs and runs `Bot(cfg)`. |
+| `Bot` (class)                   | Owns `BotCtx`/`Evaluator`/`CdpSource`; forks the price stream and price loop, then drives the chain follower. |
+| `BotCli`                        | Decline CLI: `dry-run` / `start` subcommand parsing; builds `BotConfig` from env.   |
 | `BotConfig`                     | Env-driven config (network, relay, signing key paths, thresholds, dry-run).         |
 | `BotCtx`                        | Wraps `BlockchainStreamProvider`, `AppCtx`, `Wallet`; `AutoCloseable`.              |
-| `ChainFollower`                 | Subscribes to script address, maintains `TrieMap[input → (Utxo, CdpInfo)]`, emits `CdpEvent` deltas, handles rollbacks. |
+| `CdpSource`                     | Subscribes to script address, maintains `TrieMap[input → (Utxo, CdpInfo)]`, emits `CdpEvent` deltas, handles rollbacks. |
 | `CdpEvent`                      | ADT — `Added` / `Removed` / `Reseeded`; lets the consumer scope work to what changed. |
+| `Evaluator`                     | Owns the busy gate + viewDirty flag; runs the decider over a scoped CDP set; submits or logs per `dryRun`. |
 | `LiquidationDecider`            | Pure: `(CdpInfo, Price, Config) ⇒ Skip \| Liquidate(bps)`.                          |
 | `PusdSelection`                 | Greedy-descending coin selection — minimum PUSD-UTxO subset covering debt.          |
 | `Wallet`                        | Loads signing key (env `PYTHACOIN_BOT_KEY`), signs unsigned txs via `TransactionSigner`. |
-| _(inline in `BotApp`)_          | Pyth fetch via `appCtx.pythClient`; submission via `streamProvider.submit`.         |
 
 The bot is a thin scheduler — all on-chain semantics (oracle witness, validity window,
 mint quantities) live in `commonLib`'s existing `CdpTransactions.liquidateCdp`. A
@@ -97,7 +99,7 @@ would fail phase-2 validation.
 
 `evaluate(...)` runs on **either** trigger:
 
-- `ChainFollower` callbacks (`CdpEvent.Added` / `Reseeded`) — view changed.
+- `CdpSource` callbacks (`CdpEvent.Added` / `Reseeded`) — view changed.
 - `PriceStream` push observed via `priceLoop` polling `priceCache.fetchedAt` — price moved.
 
 Both funnel through `tryEvaluate` (skip-if-busy guard) so a slow on-chain
@@ -133,7 +135,7 @@ is permissionless precisely because the protocol benefits from fast keepers.
                                                   │ read by
                                                   ▼
   ┌─────────────────────────────┐    ┌──────────────────────────┐
-  │  ChainFollower              │    │  priceLoop (ox fork)     │
+  │  CdpSource              │    │  priceLoop (ox fork)     │
   │  onChange(CdpEvent)         │    │  - poll fetchedAt        │
   │   ↓ Added/Reseeded          │    │  - on new push OR        │
   │  tryEvaluate(snapshot)      │    │    viewDirty=true:       │
@@ -179,10 +181,10 @@ is permissionless precisely because the protocol benefits from fast keepers.
 | ---------------- | ----------------------------------------------------------------------------------------------------------------------------------------- |
 | `PriceCache`     | `AtomicReference[Option[Cached]]`. Read-side wall-clock staleness check (`now - fetchedAt <= maxAgeSeconds`); no background reaper.       |
 | `PriceStream`    | `java.net.http.WebSocket` (no extra deps). Connect → subscribe → on each `streamUpdated` push: extract `solana.data`, base64-decode, `parsePriceRaw`, `cache.set`. Backoff loop on close/error. |
-| `BotCtx.priceCache` | Single instance owned by `BotCtx`; `PriceStream` writes, `BotApp.evaluate` and `priceLoop` read.                                       |
-| `ChainFollower.snapshot()` | O(1) `TrieMap.readOnlySnapshot().values` exposed for `priceLoop` so the WS-driven pass evaluates the same view the follower is tracking — without re-querying the script address per push. |
-| `BotApp.priceLoop` | 50 ms polling fork that re-fires `tryEvaluate(follower.snapshot())` whenever `priceCache.fetchedAt` advances OR `viewDirty` is set.     |
-| `BotApp.tryEvaluate` | Skip-if-busy gate via `AtomicBoolean evalBusy`; returns `Boolean` so callers can leave a "retry next tick" flag set on a dropped pass. |
+| `BotCtx.priceCache` | Single instance owned by `BotCtx`; `PriceStream` writes, `Evaluator.tryEvaluate` and `Bot.priceLoop` read.                          |
+| `CdpSource.snapshot()` | O(1) `TrieMap.readOnlySnapshot().values` exposed for `priceLoop` so the WS-driven pass evaluates the same view the source is tracking — without re-querying the script address per push. |
+| `Bot.priceLoop` | 50 ms polling fork that re-fires `evaluator.tryEvaluate(cdps.snapshot())` whenever `priceCache.fetchedAt` advances OR `viewDirty` is set.     |
+| `Evaluator.tryEvaluate` | Skip-if-busy gate via `AtomicBoolean evalBusy`; returns `Boolean` so callers can leave a "retry next tick" flag set on a dropped pass. |
 
 #### Failure modes (additions to the table further down)
 
@@ -219,7 +221,7 @@ race. No `PYTHACOIN_PRICE_REFETCH_ON_SUBMIT` knob is exposed.
 Subscription is correct because `BlockchainStreamProvider` streams ordered
 `RollForward` / `RollBackward` events resumed from a persisted `ChainPoint`. On
 restart the bot resumes from its checkpoint — events aren't silently dropped.
-Rollbacks are handled explicitly: `ChainFollower.reseed()` re-derives the entire
+Rollbacks are handled explicitly: `CdpSource.reseed()` re-derives the entire
 CDP view from `findUtxos(scriptAddr)` so a CDP that briefly looked liquidatable
 on a forked tip can never be acted on after the fork is dropped.
 

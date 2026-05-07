@@ -39,12 +39,12 @@ already in the codebase; the test class itself is the next deliverable.
    - Not found → submit a small healthy CDP (e.g. 50 ADA collateral,
      5 PUSD debt) with current cached price; wait for confirmation.
 4. **Run the bot in dry-run** for `PYTHACOIN_E2E_DURATION_SECONDS`
-   (default 180s) using the `BotApp.runWithConfig(cfg, observe)` overload
-   that yields a `BotHandle` to the test thread.
-5. **Assert via `BotHandle`** within the run window:
-   - `chainSnapshot()` eventually contains our test CDP,
-   - `priceCache.current(...)` returns `Some` (real WS pushes arrived),
-   - `evaluationsRun > 0` (at least one decider pass executed),
+   (default 180s) by constructing `Bot(cfg)` inside a `supervised` scope
+   and forking `bot.run()`.
+5. **Assert directly against the live `Bot`** within the run window:
+   - `bot.cdps.snapshot()` eventually contains our test CDP,
+   - `bot.ctx.priceCache.current(...)` returns `Some` (real WS pushes arrived),
+   - `bot.evaluator.evaluationsRun > 0` (at least one decider pass executed),
    - the bot did not crash.
 6. **Cancel the supervised scope** when assertions pass or the timeout
    elapses.
@@ -85,11 +85,13 @@ sbt 'integration/testOnly *PreprodEndToEnd* -- -n pythacoin.integration.PreprodT
   and passes it on `StreamProviderConfig.chainStore`. The
   `OxBlockchainStreamProvider` lifecycle calls `.close()` for us via
   `persistenceTeardown`.
-- `BotHandle` (in `liquid-bot/src/main/scala/pythacoin/bot/BotHandle.scala`)
-  exposes `chainSnapshot()`, `evaluationsRun`, `liquidationCandidates`,
-  `liquidationsAttempted`, `liquidationsSubmitted`. The
-  `BotApp.runWithConfig(cfg, observe)` overload hands one to the caller
-  before entering the chain-follower loop.
+- `Bot` (in `liquid-bot/src/main/scala/pythacoin/bot/Bot.scala`) exposes
+  `ctx`, `cdps`, and `evaluator` as public fields, so a test that
+  constructs `Bot(cfg)` inside a `supervised` scope can read
+  `bot.cdps.snapshot()`, `bot.ctx.priceCache`, `bot.evaluator.evaluationsRun`,
+  `bot.evaluator.liquidationCandidates`, `bot.evaluator.liquidationsAttempted`,
+  and `bot.evaluator.liquidationsSubmitted` directly — no observability
+  shim needed.
 - `Evaluator` updates atomic counters per pass / candidate / attempt /
   submission so the test asserts on forward progress without scraping
   logs.

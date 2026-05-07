@@ -9,23 +9,23 @@ import java.net.ServerSocket
 import java.time.Instant
 import scala.concurrent.duration.*
 
-/** Drives the production [[PriceStream]] against an in-process
-  * [[FakeLazerServer]] over a real WebSocket. Verifies:
+/** Drives the production [[PriceStream]] against an in-process [[FakeLazerServer]] over a real
+  * WebSocket. Verifies:
   *
   *   - subscribe handshake completes,
-  *   - `streamUpdated` JSON pushes drive `PriceCache.set` with the same raw
-  *     I64 price the fake server published,
+  *   - `streamUpdated` JSON pushes drive `PriceCache.set` with the same raw I64 price the fake
+  *     server published,
   *   - mid-stream price changes propagate within the WS push interval,
   *   - control / non-update frames (the subscribe ack) don't kill the session.
   *
-  * Hermetic, no Docker, no external network — safe under default
-  * `integration/test`.
+  * Hermetic, no Docker, no external network — safe under default `integration/test`.
   */
 class PriceStreamTest extends AnyFunSuite {
 
     private def freePort(): Int = {
         val s = new ServerSocket(0)
-        try s.getLocalPort finally s.close()
+        try s.getLocalPort
+        finally s.close()
     }
 
     /** Construct a config with only the fields PriceStream actually reads. */
@@ -49,12 +49,15 @@ class PriceStreamTest extends AnyFunSuite {
       chainStoreDir = None
     )
 
-    /** PriceStream calls only `parsePriceRaw`, which is pure byte-parsing.
-      * The other PythClient methods aren't reached, so the unused fields
-      * (provider / Blockfrost) can stay null.
+    /** PriceStream calls only `parsePriceRaw`, which is pure byte-parsing. The other PythClient
+      * methods aren't reached, so the unused fields (provider / Blockfrost) can stay null.
       */
     private def makePythClient(): PythClient = new PythClient(
-      ScriptHash.fromHex("00" * 28), "", "", "", null
+      ScriptHash.fromHex("00" * 28),
+      "",
+      "",
+      "",
+      null
     )
 
     /** Spin until `cond` returns true or `timeout` elapses. */
@@ -72,7 +75,7 @@ class PriceStreamTest extends AnyFunSuite {
         val initial = 75_230_000L // $0.7523
         val server = new FakeLazerServer(httpPort, wsPort, initial)
         server.start()
-        try
+        try {
             val cache = new PriceCache
             val cfg = configFor(s"ws://localhost:$wsPort")
             val stream = new PriceStream(cfg, makePythClient(), cache)
@@ -80,7 +83,7 @@ class PriceStreamTest extends AnyFunSuite {
             val streamThread = new Thread(() => stream.run(), "price-stream-test")
             streamThread.setDaemon(true)
             streamThread.start()
-            try
+            try {
                 // First push within ~200 ms (FakeLazer's default interval).
                 assert(
                   awaitWith(10.seconds) {
@@ -98,9 +101,10 @@ class PriceStreamTest extends AnyFunSuite {
                   },
                   "PriceCache should reflect the updated price after FakeLazer.setPrice"
                 )
-            finally
+            } finally {
                 streamThread.interrupt()
                 streamThread.join(5_000)
-        finally server.stop()
+            }
+        } finally server.stop()
     }
 }

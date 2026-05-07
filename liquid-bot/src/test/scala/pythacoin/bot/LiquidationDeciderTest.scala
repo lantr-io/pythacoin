@@ -48,7 +48,7 @@ class LiquidationDeciderTest extends AnyFunSuite {
         )
         r match
             case LiquidationDecider.Decision.Skip(reason) => assert(reason.contains("insufficient"))
-            case other => fail(s"expected Skip, got $other")
+            case other                                    => fail(s"expected Skip, got $other")
     }
 
     test("skips zero collateral, zero debt, zero price") {

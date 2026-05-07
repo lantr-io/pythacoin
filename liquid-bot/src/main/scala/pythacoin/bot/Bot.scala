@@ -1,74 +1,59 @@
 package pythacoin.bot
 
-import com.monovore.decline.{Command, Opts}
 import org.slf4j.LoggerFactory
 import ox.{ExitCode, Ox, OxApp, fork, useCloseableInScope}
-import pythacoin.CdpInfo
-import scalus.cardano.ledger.{TransactionInput, Utxo}
 
 import java.time.Instant
 
-/** Entry point for the liquidation bot. Two subcommands:
-  *   - `dry-run` — connect, follow the chain, log candidate liquidations, never submit.
-  *   - `start` — same, but submit liquidation transactions for under-collateralised CDPs.
+/** A liquidation bot instance.
   *
-  * `start` honours `PYTHACOIN_DRY_RUN=true` as an extra safety net.
+  * Construction allocates the live components — `BotCtx`, `Evaluator`, `CdpSource` — and registers
+  * `ctx` with the enclosing `Ox` scope so it's closed when the scope tears down. No threads are
+  * forked at construction time; that happens in [[run]], which is the explicit "go" verb.
   *
-  * Extending `OxApp` gives us a `supervised` scope around `run` (so `useCloseableInScope` works), a
-  * JVM shutdown hook that cancels the main fork on SIGINT/SIGTERM, and configurable exception
-  * callbacks via `OxApp.Settings`.
+  * Tests construct `Bot(cfg)` inside a `supervised` scope, fork `run()` to drive the chain, and
+  * read `cdps.snapshot()`, `evaluator.evaluationsRun`, `ctx.priceCache`, etc. directly for
+  * assertions — no observability shim needed.
+  *
+  * The companion object is the JVM entry point: extending `OxApp` gives us a `supervised` scope
+  * around `run` (so `useCloseableInScope` works), a JVM shutdown hook that cancels the main fork on
+  * SIGINT/SIGTERM, and configurable exception callbacks via `OxApp.Settings`.
   */
-object BotApp extends OxApp {
-
-    private val log = LoggerFactory.getLogger(BotApp.getClass)
-
-    private val command: Command[Boolean] = {
-        val dryRun = Opts.subcommand("dry-run", "Follow the chain and log candidate liquidations") {
-            Opts(true)
-        }
-        val start = Opts.subcommand("start", "Run the liquidation bot") {
-            Opts(false)
-        }
-        Command(name = "pythacoin-bot", header = "Pythacoin liquidation keeper")(
-          dryRun orElse start
-        )
-    }
+object Bot extends OxApp {
 
     override def run(args: Vector[String])(using Ox): ExitCode =
-        command.parse(args) match
-            case Left(help) =>
-                println(help); ExitCode.Failure(2)
-            case Right(forceDryRun) =>
-                val envCfg = BotConfig.fromEnv()
-                val cfg = envCfg.copy(dryRun = forceDryRun || envCfg.dryRun)
-                runWithConfig(cfg); ExitCode.Success
+        BotCli.resolveConfig(args) match
+            case Left(help) => println(help); ExitCode.Failure(2)
+            case Right(cfg) => Bot(cfg).run(); ExitCode.Success
 
-    /** Bot lifecycle given an already-built config. Public so tests can drive it with an in-code
-      * `BotConfig` instead of going through env vars.
+}
+
+final class Bot(cfg: BotConfig)(using Ox) {
+
+    private val log = LoggerFactory.getLogger(classOf[Bot])
+
+    val ctx: BotCtx = useCloseableInScope(BotCtx(cfg))
+    val evaluator: Evaluator = new Evaluator(ctx)
+    val cdps: CdpSource = new CdpSource(ctx, onCdpChange)
+
+    /** Fork the price-stream WS pump and the price-loop poll, then block on the chain follower
+      * until the supervised scope is cancelled.
       *
       * Three concurrent triggers feed `Evaluator.tryEvaluate`:
       *   - chain events (CDP set changed),
       *   - WS price pushes (price moved; same CDP set may now be liquidatable),
       *   - the priceLoop poll that bridges the WS write-side to the read-side and doubles as the
       *     retry mechanism for Reseeded events that get dropped by the busy gate.
-      *
-      * `observe` runs once on the bot's launch thread before the chain-follower loop takes over;
-      * tests use it to capture the [[BotHandle]] for later polling. Must not block — it would stall
-      * the follower fork.
       */
-    def runWithConfig(cfg: BotConfig, observe: BotHandle => Unit = _ => ())(using Ox): Unit = {
-        val ctx = useCloseableInScope(BotCtx(cfg))
+    def run(): Unit = {
         log.info(s"Starting\n${ctx.show}")
-        val evaluator = new Evaluator(ctx)
         fork {
             new PriceStream(cfg, ctx.appCtx.pythClient, ctx.priceCache).run()
         }
-        val follower = new ChainFollower(ctx, onCdpChange(evaluator))
         fork {
-            priceLoop(ctx, evaluator, () => follower.snapshot())
+            priceLoop()
         }
-        observe(BotHandle(ctx, follower, evaluator))
-        follower.runForever()
+        cdps.run()
     }
 
     /** Per-event dispatch: scope the work to what actually changed.
@@ -77,7 +62,7 @@ object BotApp extends OxApp {
       *   - `Reseeded` → rollback path; mark the view dirty so a dropped pass is retried by the
       *     priceLoop tick.
       */
-    private def onCdpChange(evaluator: Evaluator)(event: CdpEvent): Unit = event match
+    private def onCdpChange(event: CdpEvent): Unit = event match
         case CdpEvent.Added(utxo, info) => evaluator.tryEvaluate(Iterable((utxo, info)))
         case CdpEvent.Removed(_)        => ()
         case CdpEvent.Reseeded(all) =>
@@ -89,19 +74,15 @@ object BotApp extends OxApp {
       * add latency on top of the push; the skip-if-busy gate inside `tryEvaluate` prevents
       * back-pressure from in-flight passes.
       *
-      * `snapshot()` returns `None` while the chain follower's view is known to be inconsistent (a
+      * `cdps.snapshot()` returns `None` while the source's view is known to be inconsistent (a
       * failed rollback reseed). We hold off evaluation in that window so a stale post-fork view
       * can't drive a fee-burning submission; the next successful reseed restores it.
       */
-    private def priceLoop(
-        ctx: BotCtx,
-        evaluator: Evaluator,
-        snapshot: () => Option[collection.Map[TransactionInput, (Utxo, CdpInfo)]]
-    ): Unit = {
+    private def priceLoop(): Unit = {
         var lastFetchedAt: Option[Instant] = None
         while !Thread.currentThread.isInterrupted do
             ctx.priceCache.current(Instant.now(), ctx.cfg.priceMaxAgeSeconds).foreach { c =>
-                snapshot() match
+                cdps.snapshot() match
                     case None =>
                         // Inconsistent view; defer evaluation until reseed succeeds.
                         ()

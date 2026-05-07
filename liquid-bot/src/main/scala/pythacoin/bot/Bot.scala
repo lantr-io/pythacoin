@@ -16,8 +16,8 @@ import java.time.Instant
   * assertions — no observability shim needed.
   *
   * The companion object is the JVM entry point: extending `OxApp` gives us a `supervised` scope
-  * around `run` (so `useCloseableInScope` works), a JVM shutdown hook that cancels the main fork
-  * on SIGINT/SIGTERM, and configurable exception callbacks via `OxApp.Settings`.
+  * around `run` (so `useCloseableInScope` works), a JVM shutdown hook that cancels the main fork on
+  * SIGINT/SIGTERM, and configurable exception callbacks via `OxApp.Settings`.
   */
 object Bot extends OxApp {
 

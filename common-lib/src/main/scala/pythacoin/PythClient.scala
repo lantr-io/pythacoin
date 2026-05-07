@@ -15,14 +15,14 @@ import scala.concurrent.duration.*
 /** Client for interacting with the Pyth oracle on Cardano.
   *
   * Handles two concerns:
-  *   1. Fetching signed price updates from the Pyth Lazer REST API (off-chain data source) 2.
-  *      Looking up the Pyth State UTxO and withdraw script on-chain via Blockfrost
+  *   - Fetching signed price updates from the Pyth Lazer REST API (off-chain data source).
+  *   - Looking up the Pyth State UTxO and withdraw script on-chain via Blockfrost.
   *
   * The Pyth integration pattern on Cardano uses a "withdrawal trick":
-  *   - A Pyth State UTxO holds the withdraw script hash in its datum
-  *   - Transactions include the price update as a withdrawal redeemer
-  *   - The Pyth withdraw script validates the signature on the price data
-  *   - Our CDP validator reads the price from the withdrawal redeemer (no sig verification needed)
+  *   - A Pyth State UTxO holds the withdraw script hash in its datum.
+  *   - Transactions include the price update as a withdrawal redeemer.
+  *   - The Pyth withdraw script validates the signature on the price data.
+  *   - Our CDP validator reads the price from the withdrawal redeemer (no sig verification needed).
   */
 class PythClient(
     pythPolicyId: ScriptHash,

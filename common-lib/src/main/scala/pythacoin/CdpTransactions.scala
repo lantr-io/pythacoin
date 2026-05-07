@@ -22,11 +22,12 @@ import scala.concurrent.duration.*
   * collateral. The resulting unsigned transaction is then sent to the frontend for wallet signing.
   *
   * All transactions that read the oracle price include:
-  *   - Pyth State UTxO as a reference input (provides the withdraw script hash)
-  *   - A withdrawal with zero rewards to the Pyth withdraw script address
-  *   - The price update bytes as the withdrawal redeemer This "withdrawal trick" lets the Pyth
-  *     withdraw script verify the price signature once, and our validator can read the verified
-  *     price from the redeemer.
+  *   - Pyth State UTxO as a reference input (provides the withdraw script hash).
+  *   - A withdrawal with zero rewards to the Pyth withdraw script address.
+  *   - The price update bytes as the withdrawal redeemer.
+  *
+  * This "withdrawal trick" lets the Pyth withdraw script verify the price signature once, and our
+  * validator can read the verified price from the redeemer.
   */
 class CdpTransactions(ctx: AppCtx, pythClient: PythClient)(using CardanoInfo) {
 

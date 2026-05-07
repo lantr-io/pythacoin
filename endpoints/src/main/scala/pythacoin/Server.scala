@@ -70,10 +70,11 @@ case class SubmitTxResponse(
 /** HTTP API server built with Tapir (served by Netty).
   *
   * Endpoints follow a build-then-sign pattern:
-  *   1. Frontend calls POST /cdp/open (or borrow/repay/close/liquidate) with parameters 2. Server
-  *      builds an unsigned transaction and returns CBOR hex 3. Frontend signs via CIP-30 wallet
-  *      (signTx with partial=true) 4. Frontend calls POST /tx/submit with unsigned tx + wallet
-  *      witness 5. Server merges witnesses and submits to Blockfrost
+  *   - Frontend calls POST /cdp/open (or borrow/repay/close/liquidate) with parameters.
+  *   - Server builds an unsigned transaction and returns CBOR hex.
+  *   - Frontend signs via CIP-30 wallet (signTx with partial=true).
+  *   - Frontend calls POST /tx/submit with unsigned tx + wallet witness.
+  *   - Server merges witnesses and submits to Blockfrost.
   *
   * Auto-generated Swagger UI is available at /docs.
   */

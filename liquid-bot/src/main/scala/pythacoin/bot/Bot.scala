@@ -1,7 +1,7 @@
 package pythacoin.bot
 
 import org.slf4j.LoggerFactory
-import ox.{Ox, fork, useCloseableInScope}
+import ox.{ExitCode, Ox, OxApp, fork, useCloseableInScope}
 
 import java.time.Instant
 
@@ -14,7 +14,20 @@ import java.time.Instant
   * Tests construct `Bot(cfg)` inside a `supervised` scope, fork `run()` to drive the chain, and
   * read `cdps.snapshot()`, `evaluator.evaluationsRun`, `ctx.priceCache`, etc. directly for
   * assertions — no observability shim needed.
+  *
+  * The companion object is the JVM entry point: extending `OxApp` gives us a `supervised` scope
+  * around `run` (so `useCloseableInScope` works), a JVM shutdown hook that cancels the main fork
+  * on SIGINT/SIGTERM, and configurable exception callbacks via `OxApp.Settings`.
   */
+object Bot extends OxApp {
+
+    override def run(args: Vector[String])(using Ox): ExitCode =
+        BotCli.resolveConfig(args) match
+            case Left(help) => println(help); ExitCode.Failure(2)
+            case Right(cfg) => Bot(cfg).run(); ExitCode.Success
+
+}
+
 final class Bot(cfg: BotConfig)(using Ox) {
 
     private val log = LoggerFactory.getLogger(classOf[Bot])

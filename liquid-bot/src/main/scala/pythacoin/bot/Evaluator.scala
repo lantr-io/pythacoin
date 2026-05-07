@@ -17,7 +17,7 @@ import scala.concurrent.duration.*
   * busy gate and a "view changed during in-flight pass" retry flag. Exposes `tryEvaluate` for both
   * triggers and `markViewDirty` for the rollback path.
   *
-  * Splitting this off `BotApp` removes the `(evalBusy, viewDirty, ctx, ...)` parameter sprawl that
+  * Splitting this off `Bot` removes the `(evalBusy, viewDirty, ctx, ...)` parameter sprawl that
   * crept into the chain-event handler, the price loop, and the evaluator itself.
   */
 final class Evaluator(ctx: BotCtx) {

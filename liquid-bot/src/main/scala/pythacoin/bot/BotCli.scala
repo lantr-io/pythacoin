@@ -2,13 +2,13 @@ package pythacoin.bot
 
 import com.monovore.decline.{Command, Opts}
 
-/** Command-line surface for [[BotApp]]. Two subcommands:
+/** Command-line surface for [[Bot]]. Two subcommands:
   *   - `dry-run` — connect, follow the chain, log candidate liquidations, never submit.
   *   - `start` — same, plus actually submit liquidation transactions.
   *
-  * Kept separate from `BotApp` so the entry point reads as a lifecycle outline rather than a
-  * decline tutorial. The `--help` text and per-flag wiring are presentation noise; the bot's
-  * runtime story is in `BotApp`.
+  * Kept separate from `Bot` so the entry point reads as a lifecycle outline rather than a decline
+  * tutorial. The `--help` text and per-flag wiring are presentation noise; the bot's runtime story
+  * is in `Bot`.
   */
 object BotCli {
 

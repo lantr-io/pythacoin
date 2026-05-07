@@ -18,7 +18,7 @@ object PreprodTag extends Tag("pythacoin.integration.PreprodTag")
   * integration/test` doesn't try to talk to preprod or eat operator credits.
   *
   * What this verifies (when run, in dry-run mode):
-  *   - `BotApp` connects to a preprod relay via N2N and follows the chain.
+  *   - `Bot` connects to a preprod relay via N2N and follows the chain.
   *   - `PriceStream` opens a real Pyth Lazer WS subscription, decodes pushes, and populates
   *     `priceCache` within `priceMaxAgeSeconds`.
   *   - `Evaluator` runs at least one decision pass against live data without crashing.
@@ -56,7 +56,7 @@ class PreprodLiquidationTest extends AnyFunSuite {
         log.info(s"Preprod smoke test: running for ${runDurationSeconds}s in dry-run")
         val started = Instant.now()
 
-        // Run BotApp in a supervised scope; cancel after the window.
+        // Run the bot in a supervised scope; cancel after the window.
         // OxApp's normal SIGTERM cancellation isn't available in tests, so
         // we drive cancellation by exiting the scope.
         supervised {

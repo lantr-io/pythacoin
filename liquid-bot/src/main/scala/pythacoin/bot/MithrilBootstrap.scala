@@ -15,8 +15,7 @@ import scala.concurrent.{ExecutionContext, Future}
   * The genesis verification key is intentionally not baked in — it's a per-network constant
   * published at https://mithril.network/doc/manual/getting-started/network-configurations and
   * shipping it inline would turn an upstream key rotation into a silent-update security bug. The
-  * caller (the future BotApp wiring) reads it from env (`PYTHACOIN_MITHRIL_GENESIS_VK`) and hands
-  * it in.
+  * caller (`BotCtx`) reads it from env (`PYTHACOIN_MITHRIL_GENESIS_VK`) and hands it in.
   *
   * The aggregator URL has a sensible per-network default and an env override
   * (`PYTHACOIN_MITHRIL_AGGREGATOR_URL`) for staging endpoints or for the day Mithril relocates a

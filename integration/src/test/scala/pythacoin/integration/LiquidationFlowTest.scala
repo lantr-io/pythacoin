@@ -30,7 +30,7 @@ import scala.concurrent.duration.*
   *     by FakeLazer and parsed by both the bot and the validator agree on the price.
   *
   * What this does NOT verify (deferred to a separate test):
-  *   - The full bot lifecycle (`BotApp` + `CdpSource` + `PriceStream` + N2N stream-sync); covered
+  *   - The full bot lifecycle (`Bot` + `CdpSource` + `PriceStream` + N2N stream-sync); covered
   *     separately, requires Yaci's N2N port.
   *   - Real Pyth Ed25519 verification (deferred to task #13).
   */
